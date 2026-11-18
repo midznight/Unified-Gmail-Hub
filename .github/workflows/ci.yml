@@ -23,6 +23,8 @@ jobs:
         run: |
           node --check src/index.js
           node --check src/inline-assets.js
+      - name: Verify embedded assets match public files
+        run: npm run check:inline-assets
       - name: Run backend smoke tests
         run: npm test
       - name: Validate frontend and manifest
