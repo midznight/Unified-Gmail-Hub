@@ -19,6 +19,8 @@ const MAX_EXTERNAL_REQUESTS_PER_RUN = 29;
 const MAX_PARALLEL_FETCHES = 6;
 const MAX_REPLY_BODY_LENGTH = 100_000;
 const MESSAGE_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+const DISPLAY_WINDOW_DAYS = 7;
+const DISPLAY_WINDOW_SECONDS = DISPLAY_WINDOW_DAYS * 24 * 60 * 60;
 const MAX_CACHED_MESSAGES = 1_000;
 
 const encoder = new TextEncoder();
@@ -654,6 +656,10 @@ function extractMessageBody(payload) {
   return { html: "<p>Email ini tidak memiliki isi teks yang dapat ditampilkan.</p>", text: "", format: "empty" };
 }
 
+function getRecentWindowCutoff(now = Math.floor(Date.now() / 1_000)) {
+  return now - DISPLAY_WINDOW_SECONDS;
+}
+
 function escapeLike(value) {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
@@ -677,7 +683,7 @@ async function syncOneAccount(account, env, budget, semaphore) {
   try {
     const accessToken = await getValidAccessToken(account, env, budget, semaphore);
     const listUrl = new URL(`${GOOGLE_API}/users/me/messages`);
-    listUrl.searchParams.set("q", "in:inbox");
+    listUrl.searchParams.set("q", "in:inbox newer_than:7d");
     listUrl.searchParams.set("maxResults", String(MAX_GMAIL_LIST_IDS));
     const listing = await fetchGoogleJson(listUrl.toString(), accessToken, { method: "GET" }, budget, semaphore);
     const ids = [...new Set((listing.messages || []).map((message) => String(message.id || "")).filter(Boolean))];
@@ -1071,11 +1077,12 @@ function oauthResultPage(success, message) {
 async function getAccounts(env) {
   const result = await env.DB.prepare(`
     SELECT a.id, a.email, a.alias, a.category, a.last_synced_at, a.sync_error,
-      (SELECT COUNT(*) FROM messages m WHERE m.account_id = a.id AND m.is_unread = 1) AS unread_count
+      (SELECT COUNT(*) FROM messages m
+       WHERE m.account_id = a.id AND m.is_unread = 1 AND m.received_at >= ?) AS unread_count
     FROM accounts a
     ORDER BY a.category COLLATE NOCASE, a.alias COLLATE NOCASE, a.email COLLATE NOCASE
-  `).all();
-  return jsonResponse({ accounts: result.results || [] });
+  `).bind(getRecentWindowCutoff()).all();
+  return jsonResponse({ accounts: result.results || [], display_window_days: DISPLAY_WINDOW_DAYS });
 }
 
 async function updateAccount(request, env, accountId) {
@@ -1111,15 +1118,17 @@ async function getInbox(url, env) {
   const query = (url.searchParams.get("q") || "").trim().slice(0, 120);
   const offsetRaw = Number(url.searchParams.get("offset") || 0);
   const offset = Number.isSafeInteger(offsetRaw) && offsetRaw > 0 ? Math.min(offsetRaw, 100_000) : 0;
-  const conditions = [];
-  const parameters = [];
+  const cutoff = getRecentWindowCutoff();
+  const conditions = ["m.received_at >= ?"];
+  const parameters = [cutoff];
+  let accountId = null;
 
   if (category && category.toLocaleLowerCase("id-ID") !== "semua") {
     conditions.push("a.category = ?");
     parameters.push(category);
   }
   if (accountIdRaw) {
-    const accountId = Number(accountIdRaw);
+    accountId = Number(accountIdRaw);
     if (!Number.isSafeInteger(accountId) || accountId < 1) {
       throw new HttpError(400, "Filter akun tidak valid.", "invalid_account_filter");
     }
@@ -1132,7 +1141,7 @@ async function getInbox(url, env) {
     parameters.push(pattern, pattern, pattern);
   }
 
-  const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const whereSql = `WHERE ${conditions.join(" AND ")}`;
   const list = await env.DB.prepare(`
     SELECT m.id, m.thread_id, m.account_id, m.sender_name, m.sender_email, m.subject,
       m.snippet, m.is_unread, m.received_at, a.alias AS account_alias,
@@ -1144,25 +1153,36 @@ async function getInbox(url, env) {
     LIMIT 40 OFFSET ?
   `).bind(...parameters, offset).all();
 
-  const unreadTotal = await env.DB.prepare(
-    `SELECT COUNT(*) AS total FROM messages m INNER JOIN accounts a ON a.id = m.account_id WHERE m.is_unread = 1 ${category && category.toLocaleLowerCase("id-ID") !== "semua" ? "AND a.category = ?" : ""} ${accountIdRaw ? "AND a.id = ?" : ""}`,
-  ).bind(
-    ...(category && category.toLocaleLowerCase("id-ID") !== "semua" ? [category] : []),
-    ...(accountIdRaw ? [Number(accountIdRaw)] : []),
-  ).first();
+  const unreadConditions = ["m.is_unread = 1", "m.received_at >= ?"];
+  const unreadParameters = [cutoff];
+  if (category && category.toLocaleLowerCase("id-ID") !== "semua") {
+    unreadConditions.push("a.category = ?");
+    unreadParameters.push(category);
+  }
+  if (accountId !== null) {
+    unreadConditions.push("a.id = ?");
+    unreadParameters.push(accountId);
+  }
+  const unreadTotal = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM messages m
+    INNER JOIN accounts a ON a.id = m.account_id
+    WHERE ${unreadConditions.join(" AND ")}
+  `).bind(...unreadParameters).first();
 
   const unreadByCategory = await env.DB.prepare(`
     SELECT a.category, COUNT(*) AS unread_count
     FROM messages m INNER JOIN accounts a ON a.id = m.account_id
-    WHERE m.is_unread = 1
+    WHERE m.is_unread = 1 AND m.received_at >= ?
     GROUP BY a.category
     ORDER BY a.category COLLATE NOCASE
-  `).all();
+  `).bind(cutoff).all();
 
   return jsonResponse({
     messages: list.results || [],
     unread_total: Number(unreadTotal?.total || 0),
     unread_by_category: unreadByCategory.results || [],
+    display_window_days: DISPLAY_WINDOW_DAYS,
     next_offset: (list.results || []).length === 40 ? offset + 40 : null,
   });
 }
@@ -1174,9 +1194,9 @@ async function getMessageDetails(messageId, env, budget, semaphore) {
   const stored = await env.DB.prepare(`
     SELECT m.*, a.email AS account_email, a.alias AS account_alias
     FROM messages m INNER JOIN accounts a ON a.id = m.account_id
-    WHERE m.id = ?
-  `).bind(messageId).first();
-  if (!stored) throw new HttpError(404, "Email tidak ditemukan di cache.", "message_not_found");
+    WHERE m.id = ? AND m.received_at >= ?
+  `).bind(messageId, getRecentWindowCutoff()).first();
+  if (!stored) throw new HttpError(404, "Email tidak ditemukan dalam jendela tampilan 7 hari terakhir.", "message_not_found");
 
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(stored.account_id).first();
   if (!account) throw new HttpError(404, "Akun pemilik email tidak ditemukan.", "account_not_found");
@@ -1263,9 +1283,9 @@ async function replyToMessage(messageId, request, env, budget, semaphore) {
   const stored = await env.DB.prepare(`
     SELECT m.*, a.email AS account_email, a.alias AS account_alias
     FROM messages m INNER JOIN accounts a ON a.id = m.account_id
-    WHERE m.id = ?
-  `).bind(messageId).first();
-  if (!stored) throw new HttpError(404, "Email asal tidak ditemukan.", "message_not_found");
+    WHERE m.id = ? AND m.received_at >= ?
+  `).bind(messageId, getRecentWindowCutoff()).first();
+  if (!stored) throw new HttpError(404, "Email asal tidak ditemukan dalam jendela tampilan 7 hari terakhir.", "message_not_found");
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(stored.account_id).first();
   if (!account) throw new HttpError(404, "Akun pengirim asli tidak ditemukan.", "account_not_found");
 
