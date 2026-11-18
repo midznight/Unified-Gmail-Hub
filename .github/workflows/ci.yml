@@ -1,0 +1,56 @@
+name: Validate Unified Gmail Hub
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check Worker module syntax
+        run: |
+          node --check src/index.js
+          node --check src/inline-assets.js
+      - name: Run backend smoke tests
+        run: npm test
+      - name: Validate frontend and manifest
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { Script } from "node:vm";
+
+          const html = readFileSync("public/index.html", "utf8");
+          assert.ok(html.trimStart().startsWith("<!DOCTYPE html>"));
+          assert.ok(html.trimEnd().endsWith("</html>"));
+          assert.ok(html.includes("Perlu Re-auth"));
+          assert.ok(html.includes('sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"'));
+
+          const manifest = JSON.parse(readFileSync("public/manifest.webmanifest", "utf8"));
+          assert.equal(manifest.name, "Unified Gmail Hub");
+          for (const icon of manifest.icons ?? []) {
+            assert.ok(readFileSync(`public/${icon.src.replace(/^\//, "")}`));
+          }
+
+          const scripts = [...html.matchAll(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)];
+          for (const [index, match] of scripts.entries()) {
+            if (match[1].trim()) new Script(match[1], { filename: `inline-script-${index + 1}.js` });
+          }
+
+          const embedded = readFileSync("src/inline-assets.js", "utf8");
+          assert.ok(embedded.includes("/index.html"));
+          assert.ok(embedded.includes("/manifest.webmanifest"));
+          console.log(`Validated ${scripts.length} inline script blocks and PWA assets.`);
+          NODE
