@@ -74,7 +74,7 @@ class ExternalRequestBudget {
       throw new Error("Batas subrequest eksternal internal tercapai; request dihentikan dengan aman.");
     }
     this.count += 1;
-    return fetch(input, { ...init, redirect: "error" });
+    return fetch(input, { ...init, redirect: "manual" });
   }
 }
 
@@ -983,7 +983,7 @@ async function finishOAuth(request, env, url) {
 
     const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams({
         code,
@@ -1005,7 +1005,7 @@ async function finishOAuth(request, env, url) {
 
     const profileResponse = await fetch(`${GOOGLE_API}/users/me/profile`, {
       headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: "application/json" },
-      redirect: "error",
+      redirect: "manual",
     });
     if (!profileResponse.ok) {
       throw new HttpError(502, "Alamat Gmail tidak dapat diverifikasi dari Google.", "gmail_profile_failed");
