@@ -1,3 +1,5 @@
+import { INLINE_ASSETS } from "./inline-assets.js";
+
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_API = "https://gmail.googleapis.com/gmail/v1";
@@ -1401,6 +1403,34 @@ async function routeApi(request, env, url) {
   throw new HttpError(404, "Endpoint tidak ditemukan.", "not_found");
 }
 
+async function serveStaticAsset(request, env) {
+  if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
+    return env.ASSETS.fetch(request);
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method tidak diizinkan.", {
+      status: 405,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  const url = new URL(request.url);
+  const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
+  const asset = INLINE_ASSETS[pathname];
+  if (!asset) {
+    return new Response("Not Found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  return new Response(request.method === "HEAD" ? null : asset.body, {
+    status: 200,
+    headers: {
+      "Content-Type": asset.contentType,
+      "Cache-Control": pathname === "/index.html" ? "no-cache" : "public, max-age=3600",
+    },
+  });
+}
+
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   try {
@@ -1417,7 +1447,7 @@ async function handleRequest(request, env, ctx) {
       return await routeApi(request, env, url);
     }
 
-    const assetResponse = await env.ASSETS.fetch(request);
+    const assetResponse = await serveStaticAsset(request, env);
     return withSecurityHeaders(assetResponse, { "Cache-Control": assetResponse.status === 200 ? "no-cache" : "no-store" });
   } catch (error) {
     return errorResponse(error);
