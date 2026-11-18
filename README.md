@@ -7,6 +7,7 @@ A mobile-first, single-origin Gmail hub for managing multiple authorized Gmail a
 - Cloudflare Workers + Static Assets
 - Cloudflare D1
 - Cron Trigger every minute
+- Inbox display window limited to the most recent 7 rolling days; older cached metadata is not deleted by this filter
 - Google Gmail API
 - Vanilla JavaScript + Tailwind CSS CDN
 - PWA manifest and offline shell
