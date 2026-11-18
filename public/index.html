@@ -189,7 +189,7 @@
       </div>
       <div class="p-4 border-t border-slate-100">
         <div class="flex items-center gap-2 text-[11px] text-slate-500"><span class="status-dot" id="connectionDot"></span><span id="connectionLabel">Menghubungkan…</span></div>
-        <div class="mt-2 text-[10px] text-slate-400 leading-relaxed">Metadata inbox disimpan di cache D1. Isi email dimuat saat email dibuka.</div>
+        <div class="mt-2 text-[10px] text-slate-400 leading-relaxed">Inbox menampilkan email 7 hari terakhir. Metadata lama tetap disimpan sementara di cache D1.</div>
       </div>
     </aside>
 
@@ -200,7 +200,7 @@
           <button class="toolbar-button primary" id="mobileAddButton" type="button"><span aria-hidden="true">＋</span> Tambah akun</button>
         </div>
         <div class="flex items-start justify-between gap-3 mb-4">
-          <div class="min-w-0"><p class="text-[11px] font-bold uppercase tracking-[.12em] text-blue-600" id="listEyebrow">KOTAK MASUK</p><h1 class="text-xl font-bold tracking-tight mt-1" id="listTitle">Semua Inbox</h1><p class="text-xs text-slate-500 mt-1" id="listSubtitle">Email terbaru dari seluruh akun terhubung</p></div>
+          <div class="min-w-0"><p class="text-[11px] font-bold uppercase tracking-[.12em] text-blue-600" id="listEyebrow">KOTAK MASUK</p><h1 class="text-xl font-bold tracking-tight mt-1" id="listTitle">Semua Inbox</h1><p class="text-xs text-slate-500 mt-1" id="listSubtitle">Email dari 7 hari terakhir di seluruh akun terhubung</p></div>
           <button class="toolbar-button primary shrink-0 desktop-only" id="syncButton" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 7v5h-5M4 17v-5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.6 9a7 7 0 0 1 11.8-2L20 12M4 12l2.6 5a7 7 0 0 0 11.8-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Sync Sekarang</button>
         </div>
         <div class="search-wrap">
@@ -209,14 +209,14 @@
           <button class="icon-button clear-search" id="clearSearchButton" type="button" aria-label="Hapus pencarian" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
         </div>
         <div class="mobile-list-head items-center justify-between mt-3 gap-2">
-          <span class="text-[11px] text-slate-500" id="mobileCount">Email tersimpan di cache</span>
+          <span class="text-[11px] text-slate-500" id="mobileCount">Email dalam 7 hari terakhir</span>
           <button class="toolbar-button" id="mobileSyncButton" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 7v5h-5M4 17v-5h5M5.6 9a7 7 0 0 1 11.8-2L20 12M4 12l2.6 5a7 7 0 0 0 11.8-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Sync</button>
         </div>
       </header>
       <div id="messageList" class="panel-scroll flex-1" aria-live="polite">
         <div class="p-4 space-y-4" aria-label="Memuat email"><div class="skeleton h-3 w-1/3"></div><div class="skeleton h-3 w-2/3"></div><div class="skeleton h-3 w-1/2"></div><div class="border-t border-slate-100 pt-4 space-y-4"><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div></div></div>
       </div>
-      <div class="p-3 border-t border-slate-100 bg-white flex items-center justify-between text-[11px] text-slate-400"><span id="listFooter">Cache lokal D1</span><button id="loadMoreButton" class="text-blue-600 font-semibold px-3 py-2 rounded-lg hover:bg-blue-50" type="button" hidden>Muat email sebelumnya</button></div>
+      <div class="p-3 border-t border-slate-100 bg-white flex items-center justify-between text-[11px] text-slate-400"><span id="listFooter">Cache lokal D1</span><button id="loadMoreButton" class="text-blue-600 font-semibold px-3 py-2 rounded-lg hover:bg-blue-50" type="button" hidden>Muat email sebelumnya · 7 hari</button></div>
     </main>
 
     <section class="reader-panel" aria-label="Panel baca email">
@@ -353,10 +353,10 @@
       function updateListHeading() {
         const selectedAccount = state.accounts.find((account) => String(account.id) === String(state.accountId));
         let title = "Semua Inbox";
-        let subtitle = "Email terbaru dari seluruh akun terhubung";
-        if (selectedAccount) { title = selectedAccount.alias || selectedAccount.email; subtitle = selectedAccount.email; }
-        else if (state.category) { title = state.category; subtitle = `Email dari kategori ${state.category}`; }
-        if (state.query) subtitle = `Hasil pencarian untuk “${state.query}”`;
+        let subtitle = "Email 7 hari terakhir dari seluruh akun terhubung";
+        if (selectedAccount) { title = selectedAccount.alias || selectedAccount.email; subtitle = `Email 7 hari terakhir · ${selectedAccount.email}`; }
+        else if (state.category) { title = state.category; subtitle = `Email 7 hari terakhir · kategori ${state.category}`; }
+        if (state.query) subtitle = `Pencarian di email 7 hari terakhir: “${state.query}”`;
         $("listTitle").textContent = title;
         $("listSubtitle").textContent = subtitle;
         $("listEyebrow").textContent = selectedAccount ? "AKUN GMAIL" : state.category ? "KATEGORI" : "KOTAK MASUK";
@@ -374,15 +374,15 @@
       function renderMessages(append = false) {
         const container = $("messageList");
         if (!state.messages.length) {
-          const message = state.query ? "Tidak ada email yang cocok dengan pencarian." : state.accounts.length ? "Belum ada email di cache. Jalankan sinkronisasi untuk mengambil metadata inbox." : "Hubungkan akun Gmail pertama untuk mulai menggunakan Unified Gmail Hub.";
-          container.innerHTML = `<div class="empty-state"><div class="empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4z" stroke="currentColor" stroke-width="1.6"/><path d="m4 7 8 6 8-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2 class="mt-4 text-sm font-bold">${state.query ? "Email tidak ditemukan" : state.accounts.length ? "Inbox masih kosong" : "Mulai dengan akun Gmail"}</h2><p class="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">${htmlEscape(message)}</p>${!state.accounts.length ? `<button type="button" class="toolbar-button primary mt-4" id="emptyAddButton">Tambah Akun Gmail</button>` : !state.query ? `<button type="button" class="toolbar-button primary mt-4" id="emptySyncButton">Sync Sekarang</button>` : ""}</div>`;
+          const message = state.query ? "Tidak ada email dalam 7 hari terakhir yang cocok dengan pencarian." : state.accounts.length ? "Tidak ada email masuk dalam 7 hari terakhir. Email yang lebih lama tidak dihapus dan tetap tersedia di Gmail." : "Hubungkan akun Gmail pertama untuk mulai menggunakan Unified Gmail Hub.";
+          container.innerHTML = `<div class="empty-state"><div class="empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4z" stroke="currentColor" stroke-width="1.6"/><path d="m4 7 8 6 8-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2 class="mt-4 text-sm font-bold">${state.query ? "Email tidak ditemukan" : state.accounts.length ? "Belum ada email terbaru" : "Mulai dengan akun Gmail"}</h2><p class="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">${htmlEscape(message)}</p>${!state.accounts.length ? `<button type="button" class="toolbar-button primary mt-4" id="emptyAddButton">Tambah Akun Gmail</button>` : !state.query ? `<button type="button" class="toolbar-button primary mt-4" id="emptySyncButton">Sync Sekarang</button>` : ""}</div>`;
           $("loadMoreButton").hidden = true;
           return;
         }
         const html = state.messages.map(renderMessageCard).join("");
         if (append) container.insertAdjacentHTML("beforeend", html); else container.innerHTML = html;
         $("loadMoreButton").hidden = state.nextOffset === null;
-        $("mobileCount").textContent = `${state.messages.length} email dimuat dari cache`;
+        $("mobileCount").textContent = `${state.messages.length} email dalam 7 hari terakhir`;
       }
 
       function showInboxSkeleton() {
@@ -419,7 +419,7 @@
           renderMessages(append);
           renderCategories();
           $("allUnreadCount").textContent = String(state.unreadTotal);
-          $("listFooter").textContent = `${state.messages.length} email · metadata cache D1`;
+          $("listFooter").textContent = `${state.messages.length} email ditampilkan · 7 hari terakhir · cache D1`;
           setConnection(true, "Terhubung ke cache D1");
         } catch (error) {
           if (sequence === state.requestSequence) {
