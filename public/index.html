@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f8fafc">
+  <meta name="color-scheme" content="light">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Gmail Hub">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="description" content="Kelola banyak akun Gmail dari satu kotak masuk yang ringan, rapi, dan aman.">
+  <meta name="referrer" content="no-referrer">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <title>Unified Gmail Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #f8fafc;
+      --surface: #ffffff;
+      --surface-soft: #f1f5f9;
+      --line: #e2e8f0;
+      --ink: #0f172a;
+      --muted: #475569;
+      --faint: #64748b;
+      --blue: #2563eb;
+      --blue-soft: #eff6ff;
+      --red: #dc2626;
+      --green: #15803d;
+      --sidebar-width: 260px;
+      --list-width: 360px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; margin: 0; background: var(--canvas); color: var(--ink); }
+    body { overflow: hidden; }
+    button, input, textarea, select { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+    .app-shell { display: grid; grid-template-columns: var(--sidebar-width) var(--list-width) minmax(0, 1fr); height: 100dvh; min-height: 0; overflow: hidden; }
+    .sidebar { min-width: 0; background: #fff; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+    .inbox-panel { min-width: 0; display: flex; flex-direction: column; background: #fff; border-right: 1px solid var(--line); min-height: 0; }
+    .reader-panel { min-width: 0; display: flex; flex-direction: column; background: var(--canvas); min-height: 0; }
+    .panel-scroll { overflow: auto; min-height: 0; overscroll-behavior: contain; scrollbar-width: thin; }
+    .brand-mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: #eff6ff; color: #1d4ed8; }
+    .nav-item { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 11px; padding: 9px 12px; border-radius: 11px; color: var(--muted); text-align: left; transition: background .15s ease, color .15s ease; }
+    .nav-item:hover { background: #f8fafc; color: var(--ink); }
+    .nav-item.active { background: var(--blue-soft); color: #1d4ed8; font-weight: 650; }
+    .nav-item .nav-count { margin-left: auto; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .account-row { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 48px; padding: 7px 9px; border-radius: 11px; text-align: left; }
+    .account-row:hover, .account-row.active { background: #f1f5f9; }
+    .avatar { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 11px; background: #e2e8f0; color: #334155; font-size: 12px; font-weight: 750; }
+    .avatar.blue { background: #dbeafe; color: #1d4ed8; }
+    .avatar.green { background: #dcfce7; color: #166534; }
+    .avatar.violet { background: #ede9fe; color: #5b21b6; }
+    .avatar.amber { background: #fef3c7; color: #92400e; }
+    .account-meta { min-width: 0; flex: 1; }
+    .account-meta strong, .account-meta span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .account-meta strong { font-size: 12px; font-weight: 650; color: var(--ink); }
+    .account-meta span { margin-top: 2px; font-size: 11px; color: var(--faint); }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex: 0 0 7px; }
+    .status-dot.error { background: var(--red); }
+    .toolbar-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 13px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: #334155; font-size: 13px; font-weight: 650; transition: background .15s ease, border-color .15s ease; }
+    .toolbar-button:hover { background: #f8fafc; border-color: #cbd5e1; }
+    .toolbar-button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .toolbar-button.primary:hover { background: #1d4ed8; }
+    .toolbar-button:disabled { opacity: .55; cursor: not-allowed; }
+    .icon-button { width: 44px; height: 44px; border-radius: 10px; display: inline-grid; place-items: center; color: #475569; }
+    .icon-button:hover { background: #f1f5f9; color: var(--ink); }
+    .search-wrap { position: relative; }
+    .search-wrap input { width: 100%; height: 44px; border: 1px solid var(--line); border-radius: 11px; padding: 0 40px 0 40px; background: #fff; color: var(--ink); outline: none; font-size: 13px; }
+    .search-wrap input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px #dbeafe; }
+    .search-wrap .search-icon { position: absolute; left: 13px; top: 13px; color: #94a3b8; pointer-events: none; }
+    .search-wrap .clear-search { position: absolute; right: 5px; top: 3px; }
+    .message-card { width: 100%; display: block; text-align: left; padding: 14px 15px; border-bottom: 1px solid #f1f5f9; border-left: 3px solid transparent; background: #fff; transition: background .12s ease; }
+    .message-card:hover { background: #f8fafc; }
+    .message-card.active { background: #eff6ff; border-left-color: var(--blue); }
+    .message-card.unread .sender, .message-card.unread .subject { font-weight: 750; color: var(--ink); }
+    .message-card .sender, .message-card .subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .message-card .sender { font-size: 13px; font-weight: 600; }
+    .message-card .subject { margin-top: 7px; font-size: 13px; font-weight: 550; color: #334155; }
+    .message-card .snippet { margin-top: 5px; font-size: 12px; line-height: 1.45; color: #64748b; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .message-card .message-meta { margin-top: 9px; display: flex; align-items: center; gap: 7px; min-width: 0; color: #64748b; font-size: 10px; }
+    .message-card .message-meta .account-label { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 5px; padding: 3px 6px; background: #f1f5f9; }
+    .unread-indicator { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); flex: 0 0 7px; }
+    .reader-toolbar { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 20px; border-bottom: 1px solid var(--line); background: #fff; }
+    .reader-content { overflow: auto; min-height: 0; flex: 1; padding: 26px clamp(18px, 3vw, 42px) 32px; }
+    .reader-paper { max-width: 900px; margin: 0 auto; border: 1px solid var(--line); border-radius: 16px; background: #fff; overflow: hidden; }
+    .email-frame { display: block; width: 100%; min-height: 260px; border: 0; background: #fff; }
+    .reply-box { max-width: 900px; margin: 18px auto 0; border: 1px solid var(--line); border-radius: 15px; background: #fff; padding: 16px; }
+    .reply-box textarea { display: block; width: 100%; min-height: 112px; resize: vertical; border: 0; outline: 0; padding: 9px 0; color: var(--ink); font-size: 14px; line-height: 1.6; }
+    .reply-box textarea::placeholder { color: #94a3b8; }
+    .skeleton { position: relative; overflow: hidden; background: #e2e8f0; border-radius: 7px; }
+    .skeleton::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, #f8fafc, transparent); animation: shimmer 1.4s infinite; }
+    @keyframes shimmer { 100% { transform: translateX(100%); } }
+    .spinner { width: 15px; height: 15px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .toast-region { position: fixed; right: 18px; bottom: max(18px, env(safe-area-inset-bottom)); z-index: 100; display: grid; gap: 9px; width: min(370px, calc(100vw - 36px)); pointer-events: none; }
+    .toast { border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 12px 35px rgba(15, 23, 42, .12); padding: 12px 14px; font-size: 13px; color: var(--ink); display: flex; align-items: flex-start; gap: 9px; animation: toast-in .18s ease-out; }
+    .toast.success .toast-mark { color: var(--green); }
+    .toast.error .toast-mark { color: var(--red); }
+    @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    dialog { width: min(470px, calc(100vw - 28px)); max-height: min(90dvh, 680px); border: 1px solid var(--line); border-radius: 18px; padding: 0; background: #fff; color: var(--ink); box-shadow: 0 24px 80px rgba(15, 23, 42, .22); }
+    dialog::backdrop { background: rgba(15, 23, 42, .42); backdrop-filter: blur(2px); }
+    .modal-head { padding: 21px 22px 15px; border-bottom: 1px solid var(--line); }
+    .modal-body { padding: 19px 22px 22px; }
+    .form-label { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 700; color: #334155; }
+    .form-control { width: 100%; min-height: 45px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0 12px; background: #fff; color: var(--ink); outline: none; font-size: 14px; }
+    .form-control:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px #dbeafe; }
+    .field-hint { margin-top: 6px; font-size: 11px; line-height: 1.5; color: #64748b; }
+    .empty-state { display: grid; justify-items: center; text-align: center; padding: 50px 24px; }
+    .empty-icon { width: 54px; height: 54px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 17px; color: #64748b; background: #fff; }
+    .mobile-only { display: none; }
+    .mobile-list-head { display: none; }
+    .desktop-only { display: initial; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    @media (max-width: 1180px) {
+      :root { --sidebar-width: 224px; --list-width: 330px; }
+      .reader-content { padding: 20px 18px 28px; }
+    }
+    @media (max-width: 920px) {
+      .app-shell { grid-template-columns: 220px minmax(0, 1fr); }
+      .reader-panel { display: none; }
+      body.message-open .sidebar, body.message-open .inbox-panel { display: none; }
+      body.message-open .reader-panel { display: flex; grid-column: 1 / -1; }
+      .mobile-only { display: inline-grid; }
+    }
+    @media (max-width: 640px) {
+      body { overflow: hidden; }
+      .app-shell { display: block; height: 100dvh; }
+      .sidebar { display: none; }
+      .inbox-panel { height: 100%; border: 0; }
+      .inbox-header { padding-top: max(13px, env(safe-area-inset-top)); }
+      .reader-panel { display: none; height: 100%; }
+      body.message-open .reader-panel { display: flex; }
+      body.message-open .inbox-panel { display: none; }
+      .reader-toolbar { padding: 7px 12px; min-height: 58px; }
+      .reader-content { padding: 13px 10px 22px; }
+      .reader-paper { border-radius: 12px; }
+      .reply-box { padding: 12px; margin-top: 12px; }
+      .message-card { padding: 14px 13px; }
+      .mobile-list-head { display: flex; }
+      .desktop-only { display: none !important; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <aside class="sidebar" aria-label="Navigasi utama">
+      <div class="px-5 pt-5 pb-4 flex items-center gap-3">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="23" height="23" viewBox="0 0 24 24" fill="none"><path d="M3 7.5 12 14l9-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" stroke-width="2"/></svg>
+        </div>
+        <div class="min-w-0"><div class="text-sm font-bold tracking-tight">Unified Gmail Hub</div><div class="text-[11px] text-slate-500 mt-0.5">Satu pintu untuk semua inbox</div></div>
+      </div>
+      <div class="px-3 pb-3">
+        <button class="toolbar-button primary w-full" id="addAccountButton" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Tambah Akun Gmail
+        </button>
+      </div>
+      <div class="px-3 pb-3">
+        <button class="nav-item active" id="allInboxButton" type="button" data-filter="all">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4z" stroke="currentColor" stroke-width="1.7"/><path d="m4 7 8 6 8-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="text-[13px]">Semua Inbox</span><span class="nav-count" id="allUnreadCount">0</span>
+        </button>
+      </div>
+      <div class="px-3 pb-2">
+        <div class="px-3 mb-2 flex items-center justify-between"><span class="text-[10px] font-bold uppercase tracking-[.12em] text-slate-400">Kategori</span></div>
+        <nav id="categoryNav" class="space-y-1" aria-label="Filter kategori">
+          <div class="px-3 py-2 text-xs text-slate-400">Belum ada kategori</div>
+        </nav>
+      </div>
+      <div class="mx-4 my-3 border-t border-slate-100"></div>
+      <div class="px-3 flex items-center justify-between mb-2">
+        <span class="px-3 text-[10px] font-bold uppercase tracking-[.12em] text-slate-400">Akun terhubung</span>
+        <span id="accountTotal" class="text-[11px] text-slate-400 tabular-nums">0</span>
+      </div>
+      <div class="panel-scroll flex-1 px-3 pb-3" id="accountNav">
+        <div class="px-3 py-3 text-xs text-slate-400">Memuat akun…</div>
+      </div>
+      <div class="p-4 border-t border-slate-100">
+        <div class="flex items-center gap-2 text-[11px] text-slate-500"><span class="status-dot" id="connectionDot"></span><span id="connectionLabel">Menghubungkan…</span></div>
+        <div class="mt-2 text-[10px] text-slate-400 leading-relaxed">Metadata inbox disimpan di cache D1. Isi email dimuat saat email dibuka.</div>
+      </div>
+    </aside>
+
+    <main class="inbox-panel" aria-label="Daftar email">
+      <header class="inbox-header px-5 pt-5 pb-4 border-b border-slate-200 bg-white">
+        <div class="mobile-list-head items-center justify-between mb-4">
+          <div class="flex items-center gap-2"><div class="brand-mark" style="width:34px;height:34px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 7.5 12 14l9-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" stroke-width="2"/></svg></div><span class="font-bold text-sm">Gmail Hub</span></div>
+          <button class="toolbar-button primary" id="mobileAddButton" type="button"><span aria-hidden="true">＋</span> Tambah akun</button>
+        </div>
+        <div class="flex items-start justify-between gap-3 mb-4">
+          <div class="min-w-0"><p class="text-[11px] font-bold uppercase tracking-[.12em] text-blue-600" id="listEyebrow">KOTAK MASUK</p><h1 class="text-xl font-bold tracking-tight mt-1" id="listTitle">Semua Inbox</h1><p class="text-xs text-slate-500 mt-1" id="listSubtitle">Email terbaru dari seluruh akun terhubung</p></div>
+          <button class="toolbar-button primary shrink-0 desktop-only" id="syncButton" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 7v5h-5M4 17v-5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.6 9a7 7 0 0 1 11.8-2L20 12M4 12l2.6 5a7 7 0 0 0 11.8-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Sync Sekarang</button>
+        </div>
+        <div class="search-wrap">
+          <svg class="search-icon" width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Cari pengirim, alamat, atau subjek…" aria-label="Cari email lintas akun">
+          <button class="icon-button clear-search" id="clearSearchButton" type="button" aria-label="Hapus pencarian" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+        </div>
+        <div class="mobile-list-head items-center justify-between mt-3 gap-2">
+          <span class="text-[11px] text-slate-500" id="mobileCount">Email tersimpan di cache</span>
+          <button class="toolbar-button" id="mobileSyncButton" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 7v5h-5M4 17v-5h5M5.6 9a7 7 0 0 1 11.8-2L20 12M4 12l2.6 5a7 7 0 0 0 11.8-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Sync</button>
+        </div>
+      </header>
+      <div id="messageList" class="panel-scroll flex-1" aria-live="polite">
+        <div class="p-4 space-y-4" aria-label="Memuat email"><div class="skeleton h-3 w-1/3"></div><div class="skeleton h-3 w-2/3"></div><div class="skeleton h-3 w-1/2"></div><div class="border-t border-slate-100 pt-4 space-y-4"><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div></div></div>
+      </div>
+      <div class="p-3 border-t border-slate-100 bg-white flex items-center justify-between text-[11px] text-slate-400"><span id="listFooter">Cache lokal D1</span><button id="loadMoreButton" class="text-blue-600 font-semibold px-3 py-2 rounded-lg hover:bg-blue-50" type="button" hidden>Muat email sebelumnya</button></div>
+    </main>
+
+    <section class="reader-panel" aria-label="Panel baca email">
+      <div class="reader-toolbar">
+        <div class="flex items-center gap-1">
+          <button class="icon-button mobile-only" id="backToListButton" type="button" aria-label="Kembali ke inbox"><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="m15 18-6-6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <span class="text-xs font-semibold text-slate-500" id="readerContext">Pilih email untuk membaca</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <button class="icon-button" id="openOriginalButton" type="button" aria-label="Buka di Gmail" title="Buka di Gmail" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 4h6v6M20 4l-9 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+        </div>
+      </div>
+      <div class="reader-content" id="readerContent">
+        <div class="h-full min-h-[420px] grid place-items-center">
+          <div class="text-center max-w-xs px-5"><div class="empty-icon mx-auto"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4z" stroke="currentColor" stroke-width="1.6"/><path d="m4 7 8 6 8-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2 class="mt-4 text-sm font-bold">Pilih email untuk dibaca</h2><p class="mt-2 text-xs leading-relaxed text-slate-500">Pilih salah satu email di daftar. Isi email akan dimuat saat dibuka, bukan saat inbox pertama kali ditampilkan.</p></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <dialog id="addAccountDialog">
+    <form id="addAccountForm">
+      <div class="modal-head flex items-start justify-between gap-4"><div><p class="text-[10px] font-bold tracking-[.12em] uppercase text-blue-600">KONEKSI BARU</p><h2 class="text-lg font-bold mt-1">Tambah Akun Gmail</h2><p class="text-xs text-slate-500 mt-1">Hubungkan akun Google resmi dengan izin Gmail yang diminta.</p></div><button class="icon-button -mr-2 -mt-2" type="button" data-close="addAccountDialog" aria-label="Tutup"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
+      <div class="modal-body space-y-4">
+        <div><label class="form-label" for="newAlias">Alias akun</label><input class="form-control" id="newAlias" name="alias" maxlength="60" placeholder="Contoh: Operasional" required><p class="field-hint">Nama singkat yang akan tampil di sidebar dan email.</p></div>
+        <div><label class="form-label" for="newCategory">Kategori</label><input class="form-control" id="newCategory" name="category" maxlength="40" list="categoryOptions" placeholder="Contoh: Pekerjaan" value="General" required><datalist id="categoryOptions"></datalist><p class="field-hint">Gunakan kategori yang sama untuk mengelompokkan beberapa akun.</p></div>
+        <div class="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs leading-relaxed text-blue-900"><strong>Privasi:</strong> aplikasi meminta akses Gmail untuk membaca inbox, menandai email telah dibaca, dan mengirim balasan. Refresh token disimpan terenkripsi di database aplikasi.</div>
+        <div class="flex justify-end gap-2 pt-1"><button class="toolbar-button" type="button" data-close="addAccountDialog">Batal</button><button class="toolbar-button primary" type="submit">Lanjut ke Google <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M7 17 17 7M8 7h9v9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="editAccountDialog">
+    <form id="editAccountForm">
+      <div class="modal-head flex items-start justify-between gap-4"><div><p class="text-[10px] font-bold tracking-[.12em] uppercase text-blue-600">PREFERENSI AKUN</p><h2 class="text-lg font-bold mt-1">Edit Akun</h2><p class="text-xs text-slate-500 mt-1" id="editAccountEmail"></p></div><button class="icon-button -mr-2 -mt-2" type="button" data-close="editAccountDialog" aria-label="Tutup"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
+      <div class="modal-body space-y-4">
+        <input type="hidden" id="editAccountId" name="id">
+        <div><label class="form-label" for="editAlias">Alias akun</label><input class="form-control" id="editAlias" name="alias" maxlength="60" required></div>
+        <div><label class="form-label" for="editCategory">Kategori</label><input class="form-control" id="editCategory" name="category" maxlength="40" list="categoryOptions" required></div>
+        <div class="flex items-center justify-between gap-3 pt-2"><button class="text-sm font-semibold text-red-600 px-2 py-3 rounded-lg hover:bg-red-50" id="deleteAccountButton" type="button">Hapus akun</button><div class="flex gap-2"><button class="toolbar-button" type="button" data-close="editAccountDialog">Batal</button><button class="toolbar-button primary" type="submit">Simpan</button></div></div>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toastRegion" class="toast-region" role="status" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      "use strict";
+      const state = {
+        accounts: [], messages: [], selectedMessageId: null, selectedMessage: null,
+        category: "", accountId: "", query: "", offset: 0, nextOffset: null,
+        unreadTotal: 0, unreadByCategory: [], loadingInbox: false, loadingDetails: false,
+        syncing: false, editingAccount: null, requestSequence: 0,
+      };
+      const $ = (id) => document.getElementById(id);
+      const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+      const initials = (value) => String(value || "?").trim().split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+      const avatarTone = (id) => ["blue", "green", "violet", "amber"][Math.abs(Number(id) || 0) % 4];
+      const dateLabel = (seconds) => {
+        const date = new Date(Number(seconds || 0) * 1000);
+        if (!Number.isFinite(date.getTime()) || !seconds) return "Waktu tidak tersedia";
+        const now = new Date();
+        const sameDay = date.toDateString() === now.toDateString();
+        return new Intl.DateTimeFormat("id-ID", sameDay ? { hour: "2-digit", minute: "2-digit" } : { day: "2-digit", month: "short" }).format(date);
+      };
+      const fullDate = (seconds) => {
+        const date = new Date(Number(seconds || 0) * 1000);
+        return Number.isFinite(date.getTime()) && seconds ? new Intl.DateTimeFormat("id-ID", { dateStyle: "long", timeStyle: "short" }).format(date) : "Waktu tidak tersedia";
+      };
+      const formatBytes = (bytes) => {
+        const size = Number(bytes || 0);
+        return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.ceil(size / 1024))} KB`;
+      };
+
+      async function api(path, options = {}) {
+        const headers = new Headers(options.headers || {});
+        if (options.body !== undefined) headers.set("Content-Type", "application/json");
+        headers.set("Accept", "application/json");
+        const response = await fetch(path, { ...options, headers, credentials: "same-origin", cache: "no-store", redirect: "follow" });
+        const contentType = response.headers.get("content-type") || "";
+        let data = {};
+        if (contentType.includes("application/json")) {
+          try { data = await response.json(); } catch { data = {}; }
+        } else if (!response.ok) {
+          data = { error: `Server mengembalikan HTTP ${response.status}.` };
+        }
+        if (!response.ok) throw new Error(data.error || `Permintaan gagal (HTTP ${response.status}).`);
+        return data;
+      }
+
+      function toast(message, type = "success") {
+        const node = document.createElement("div");
+        node.className = `toast ${type}`;
+        node.innerHTML = `<span class="toast-mark" aria-hidden="true">${type === "error" ? "!" : "✓"}</span><span class="min-w-0">${htmlEscape(message)}</span>`;
+        $("toastRegion").append(node);
+        window.setTimeout(() => node.remove(), 4200);
+      }
+
+      function setConnection(ok, label) {
+        $("connectionDot").classList.toggle("error", !ok);
+        $("connectionLabel").textContent = label;
+      }
+
+      function setActiveNav() {
+        $("allInboxButton").classList.toggle("active", !state.category && !state.accountId);
+      }
+
+      function renderCategories() {
+        const map = new Map();
+        for (const item of state.unreadByCategory) map.set(String(item.category || "General"), Number(item.unread_count || 0));
+        const categories = [...new Set(state.accounts.map((account) => String(account.category || "General")))].sort((a, b) => a.localeCompare(b, "id"));
+        $("categoryNav").innerHTML = categories.length ? categories.map((category) => {
+          const active = state.category === category && !state.accountId;
+          return `<button type="button" class="nav-item ${active ? "active" : ""}" data-category="${htmlEscape(category)}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4z" stroke="currentColor" stroke-width="1.7"/><path d="M8 9h8M8 13h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span class="text-[13px] truncate">${htmlEscape(category)}</span><span class="nav-count">${map.get(category) || 0}</span></button>`;
+        }).join("") : `<div class="px-3 py-2 text-xs text-slate-400">Belum ada kategori</div>`;
+        $("categoryOptions").innerHTML = categories.map((category) => `<option value="${htmlEscape(category)}"></option>`).join("");
+        setActiveNav();
+      }
+
+      function renderAccounts() {
+        $("accountTotal").textContent = String(state.accounts.length);
+        if (!state.accounts.length) {
+          $("accountNav").innerHTML = `<div class="px-3 py-3 text-xs leading-relaxed text-slate-400">Belum ada akun. Tambahkan akun Gmail resmi untuk mulai menggabungkan inbox.</div>`;
+          return;
+        }
+        $("accountNav").innerHTML = state.accounts.map((account) => {
+          const active = String(state.accountId) === String(account.id);
+          const syncError = String(account.sync_error || ""); const problem = Boolean(syncError); const needsReauth = /invalid_grant|hubungkan ulang akun|access token/i.test(syncError);
+          return `<div class="group flex items-center gap-1 rounded-xl ${active ? "bg-slate-100" : "hover:bg-slate-50"}"><button type="button" class="account-row flex-1 min-w-0 ${active ? "active" : ""}" data-account="${Number(account.id)}"><span class="avatar ${avatarTone(account.id)}">${htmlEscape(initials(account.alias || account.email))}</span><span class="account-meta"><strong>${htmlEscape(account.alias || account.email)}</strong><span>${htmlEscape(account.email)}</span></span>${needsReauth ? `<span class="text-[8px] font-bold text-red-600 whitespace-nowrap">Perlu Re-auth</span>` : problem ? `<span class="text-[8px] font-bold text-amber-700 whitespace-nowrap">Perlu dicek</span>` : Number(account.unread_count) > 0 ? `<span class="text-[11px] font-bold text-slate-500 tabular-nums">${Number(account.unread_count)}</span>` : `<span class="status-dot"></span>`}</button><button type="button" class="icon-button shrink-0 opacity-60 hover:opacity-100" style="width:34px;height:42px" data-edit-account="${Number(account.id)}" aria-label="Edit ${htmlEscape(account.alias || account.email)}" title="Edit akun"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="m14 5 5 5M4 20l4.2-.8L19 8.4a2.1 2.1 0 0 0-3-3L5.2 16.2 4 20Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`;
+        }).join("");
+      }
+
+      function updateListHeading() {
+        const selectedAccount = state.accounts.find((account) => String(account.id) === String(state.accountId));
+        let title = "Semua Inbox";
+        let subtitle = "Email terbaru dari seluruh akun terhubung";
+        if (selectedAccount) { title = selectedAccount.alias || selectedAccount.email; subtitle = selectedAccount.email; }
+        else if (state.category) { title = state.category; subtitle = `Email dari kategori ${state.category}`; }
+        if (state.query) subtitle = `Hasil pencarian untuk “${state.query}”`;
+        $("listTitle").textContent = title;
+        $("listSubtitle").textContent = subtitle;
+        $("listEyebrow").textContent = selectedAccount ? "AKUN GMAIL" : state.category ? "KATEGORI" : "KOTAK MASUK";
+      }
+
+      function renderMessageCard(message) {
+        const unread = Number(message.is_unread) === 1;
+        const active = String(message.id) === String(state.selectedMessageId);
+        const sender = message.sender_name || message.sender_email || "Pengirim tidak diketahui";
+        const account = message.account_alias || message.account_email || "Akun Gmail";
+        const subject = message.subject || "(Tanpa subjek)";
+        return `<button type="button" class="message-card ${unread ? "unread" : ""} ${active ? "active" : ""}" data-message="${htmlEscape(message.id)}"><div class="flex items-center gap-2"><span class="${unread ? "unread-indicator" : "w-[7px]"}" aria-hidden="true"></span><span class="sender min-w-0 flex-1">${htmlEscape(sender)}</span><time class="text-[10px] text-slate-400 shrink-0">${htmlEscape(dateLabel(message.received_at))}</time></div><div class="subject pl-[15px]">${htmlEscape(subject)}</div><div class="snippet pl-[15px]">${htmlEscape(message.snippet || "Tidak ada cuplikan email.")}</div><div class="message-meta pl-[15px]"><span class="account-label">${htmlEscape(account)}</span><span>${htmlEscape(message.account_category || "General")}</span></div></button>`;
+      }
+
+      function renderMessages(append = false) {
+        const container = $("messageList");
+        if (!state.messages.length) {
+          const message = state.query ? "Tidak ada email yang cocok dengan pencarian." : state.accounts.length ? "Belum ada email di cache. Jalankan sinkronisasi untuk mengambil metadata inbox." : "Hubungkan akun Gmail pertama untuk mulai menggunakan Unified Gmail Hub.";
+          container.innerHTML = `<div class="empty-state"><div class="empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4z" stroke="currentColor" stroke-width="1.6"/><path d="m4 7 8 6 8-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2 class="mt-4 text-sm font-bold">${state.query ? "Email tidak ditemukan" : state.accounts.length ? "Inbox masih kosong" : "Mulai dengan akun Gmail"}</h2><p class="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">${htmlEscape(message)}</p>${!state.accounts.length ? `<button type="button" class="toolbar-button primary mt-4" id="emptyAddButton">Tambah Akun Gmail</button>` : !state.query ? `<button type="button" class="toolbar-button primary mt-4" id="emptySyncButton">Sync Sekarang</button>` : ""}</div>`;
+          $("loadMoreButton").hidden = true;
+          return;
+        }
+        const html = state.messages.map(renderMessageCard).join("");
+        if (append) container.insertAdjacentHTML("beforeend", html); else container.innerHTML = html;
+        $("loadMoreButton").hidden = state.nextOffset === null;
+        $("mobileCount").textContent = `${state.messages.length} email dimuat dari cache`;
+      }
+
+      function showInboxSkeleton() {
+        $("messageList").innerHTML = `<div class="p-4 space-y-4"><div class="skeleton h-3 w-1/3"></div><div class="skeleton h-3 w-2/3"></div><div class="skeleton h-3 w-1/2"></div><div class="border-t border-slate-100 pt-4 space-y-4"><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div></div></div>`;
+      }
+
+      async function loadAccounts() {
+        const data = await api("/api/accounts");
+        state.accounts = Array.isArray(data.accounts) ? data.accounts : [];
+        renderAccounts();
+        return state.accounts;
+      }
+
+      async function loadInbox({ append = false } = {}) {
+        if (state.loadingInbox) return;
+        state.loadingInbox = true;
+        const sequence = ++state.requestSequence;
+        if (!append) { state.offset = 0; state.nextOffset = null; showInboxSkeleton(); }
+        const params = new URLSearchParams();
+        if (state.category) params.set("category", state.category);
+        if (state.accountId) params.set("account_id", state.accountId);
+        if (state.query) params.set("q", state.query);
+        params.set("offset", String(append ? state.offset : 0));
+        updateListHeading();
+        try {
+          const data = await api(`/api/inbox?${params.toString()}`);
+          if (sequence !== state.requestSequence) return;
+          const incoming = Array.isArray(data.messages) ? data.messages : [];
+          if (append) state.messages = [...state.messages, ...incoming]; else state.messages = incoming;
+          state.unreadTotal = Number(data.unread_total || 0);
+          state.unreadByCategory = Array.isArray(data.unread_by_category) ? data.unread_by_category : [];
+          state.nextOffset = data.next_offset === null || data.next_offset === undefined ? null : Number(data.next_offset);
+          if (append) state.offset = Number(params.get("offset"));
+          renderMessages(append);
+          renderCategories();
+          $("allUnreadCount").textContent = String(state.unreadTotal);
+          $("listFooter").textContent = `${state.messages.length} email · metadata cache D1`;
+          setConnection(true, "Terhubung ke cache D1");
+        } catch (error) {
+          if (sequence === state.requestSequence) {
+            $("messageList").innerHTML = `<div class="empty-state"><div class="empty-icon text-red-600">!</div><h2 class="mt-4 text-sm font-bold">Inbox tidak dapat dimuat</h2><p class="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">${htmlEscape(error.message)}</p><button class="toolbar-button mt-4" id="retryInboxButton" type="button">Coba lagi</button></div>`;
+            setConnection(false, "Koneksi bermasalah");
+          }
+        } finally {
+          if (sequence === state.requestSequence) state.loadingInbox = false;
+        }
+      }
+
+      function updateSelectedMessageInList() {
+        const message = state.messages.find((item) => String(item.id) === String(state.selectedMessageId));
+        if (message) message.is_unread = 0;
+        const card = [...document.querySelectorAll("[data-message]")].find((node) => node.dataset.message === String(state.selectedMessageId));
+        if (card) card.classList.remove("unread");
+      }
+
+      function emailDocument(bodyHtml, bodyText) {
+        let content = bodyHtml;
+        if (!content) content = `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;color:#0f172a">${htmlEscape(bodyText || "Email ini tidak memiliki konten teks yang dapat ditampilkan.")}</pre>`;
+        return `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'; font-src data:; media-src data:;"><style>html,body{margin:0;padding:0;background:#fff;color:#0f172a;font:14px/1.65 Arial,sans-serif;overflow-wrap:anywhere}body{padding:22px 24px}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}pre{white-space:pre-wrap;overflow-wrap:anywhere}blockquote{margin-left:0;padding-left:14px;border-left:3px solid #cbd5e1;color:#475569}a{color:#2563eb}*{max-width:100%}</style></head><body>${content || ""}</body></html>`;
+      }
+
+      function resizeEmailFrame(frame) {
+        try {
+          const doc = frame.contentDocument;
+          if (!doc) return;
+          const measure = () => {
+            const height = Math.max(doc.documentElement?.scrollHeight || 0, doc.body?.scrollHeight || 0, 260);
+            frame.style.height = `${Math.min(height + 4, 12000)}px`;
+          };
+          measure();
+          if (doc.fonts?.ready) doc.fonts.ready.then(measure).catch(() => {});
+          if ("ResizeObserver" in window && doc.body) {
+            const observer = new ResizeObserver(measure);
+            observer.observe(doc.body);
+            frame._resizeObserver = observer;
+          }
+          frame._measureTimer = window.setTimeout(measure, 500);
+        } catch (error) {
+          // Keep the iframe independently scrollable if the browser blocks measurement.
+          frame.style.height = "70vh";
+        }
+      }
+
+      function renderReader(message) {
+        const recipient = message.from?.name ? `${message.from.name} <${message.from.email || ""}>` : (message.from?.email || "Pengirim tidak diketahui");
+        const accountName = `${message.account_alias || "Akun"} <${message.account_email || ""}>`;
+        const attachmentHtml = Array.isArray(message.attachments) && message.attachments.length
+          ? `<div class="mt-5 pt-4 border-t border-slate-100"><p class="text-[11px] font-bold text-slate-600 mb-2">Lampiran · ${message.attachments.length}</p><div class="flex flex-wrap gap-2">${message.attachments.map((attachment) => `<span class="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M8 12.5 14.5 6a3 3 0 0 1 4.2 4.2l-8.1 8.1a5 5 0 0 1-7.1-7.1l8-8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span class="max-w-[220px] truncate">${htmlEscape(attachment.name)}</span><span class="text-slate-400">${htmlEscape(attachment.size_label || formatBytes(attachment.size_bytes))}</span></span>`).join("")}</div><p class="mt-2 text-[10px] text-slate-400">Lampiran hanya ditampilkan sebagai metadata; file tidak diunduh.</p></div>` : "";
+        $("readerContext").textContent = `Dari ${recipient}`;
+        $("openOriginalButton").disabled = false;
+        $("readerContent").innerHTML = `<article class="reader-paper"><header class="p-5 sm:p-7 border-b border-slate-100"><div class="flex items-start gap-3"><div class="avatar blue">${htmlEscape(initials(message.from?.name || message.from?.email))}</div><div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><h1 class="text-lg sm:text-xl font-bold tracking-tight break-words">${htmlEscape(message.subject || "(Tanpa subjek)")}</h1><span class="shrink-0 text-[10px] text-slate-400">${htmlEscape(dateLabel(message.received_at))}</span></div><p class="text-xs text-slate-600 mt-2 break-words">${htmlEscape(recipient)}</p><p class="text-[11px] text-slate-400 mt-1 break-words">Diterima oleh ${htmlEscape(accountName)}</p><p class="text-[10px] text-slate-400 mt-1">${htmlEscape(fullDate(message.received_at))}</p></div></div>${attachmentHtml}</header><div class="bg-white"><iframe id="emailBodyFrame" class="email-frame" title="Isi email" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe></div></article><section class="reply-box"><div class="flex flex-wrap items-center justify-between gap-2"><div><p class="text-xs font-bold">Balas email</p><p class="text-[10px] text-slate-500 mt-1">Membalas sebagai: <strong class="text-slate-700">${htmlEscape(accountName)}</strong></p></div><span class="text-[10px] text-slate-400">Balasan mengikuti thread asli</span></div><textarea id="replyBody" maxlength="100000" placeholder="Tulis balasan…" aria-label="Isi balasan email"></textarea><div class="flex items-center justify-between gap-3 border-t border-slate-100 pt-3"><span class="text-[10px] text-slate-400">Email dikirim melalui akun penerima asli.</span><button class="toolbar-button primary" id="sendReplyButton" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="m21 3-7.5 18-3.5-7-7-3.5L21 3Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 14 21 3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Kirim balasan</button></div></section>`;
+        const frame = $("emailBodyFrame");
+        frame.onload = () => resizeEmailFrame(frame);
+        frame.srcdoc = emailDocument(message.body_html, message.body_text);
+      }
+
+      async function openMessage(messageId) {
+        state.selectedMessageId = String(messageId);
+        state.selectedMessage = null;
+        state.loadingDetails = true;
+        document.body.classList.add("message-open");
+        renderMessages();
+        $("readerContext").textContent = "Memuat isi email…";
+        $("openOriginalButton").disabled = true;
+        $("readerContent").innerHTML = `<div class="max-w-3xl mx-auto p-5 space-y-5"><div class="skeleton h-7 w-2/3"></div><div class="skeleton h-3 w-1/3"></div><div class="skeleton h-3 w-1/2"></div><div class="mt-8 space-y-3"><div class="skeleton h-3 w-full"></div><div class="skeleton h-3 w-11/12"></div><div class="skeleton h-3 w-4/5"></div><div class="skeleton h-40 w-full mt-6"></div></div></div>`;
+        try {
+          const message = await api(`/api/messages/${encodeURIComponent(messageId)}`);
+          if (String(state.selectedMessageId) !== String(messageId)) return;
+          state.selectedMessage = message;
+          updateSelectedMessageInList();
+          renderReader(message);
+          void loadAccounts().then(() => loadInbox()).catch(() => {});
+        } catch (error) {
+          $("readerContent").innerHTML = `<div class="empty-state"><div class="empty-icon text-red-600">!</div><h2 class="mt-4 text-sm font-bold">Email tidak dapat dibuka</h2><p class="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">${htmlEscape(error.message)}</p><button class="toolbar-button mt-4" id="retryMessageButton" type="button">Coba lagi</button></div>`;
+          toast(error.message, "error");
+        } finally { state.loadingDetails = false; }
+      }
+
+      async function sendReply() {
+        const body = $("replyBody")?.value || "";
+        if (!body.trim()) { toast("Isi balasan belum ditulis.", "error"); return; }
+        if (!state.selectedMessageId) return;
+        const button = $("sendReplyButton");
+        button.disabled = true;
+        button.innerHTML = `<span class="spinner"></span>Mengirim…`;
+        try {
+          await api(`/api/messages/${encodeURIComponent(state.selectedMessageId)}/reply`, { method: "POST", body: JSON.stringify({ body }) });
+          $("replyBody").value = "";
+          toast("Balasan berhasil dikirim melalui akun yang menerima email asli.");
+        } catch (error) { toast(error.message, "error"); }
+        finally {
+          if (button.isConnected) { button.disabled = false; button.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="m21 3-7.5 18-3.5-7-7-3.5L21 3Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 14 21 3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Kirim balasan`; }
+        }
+      }
+
+      async function syncNow(button) {
+        if (state.syncing) return;
+        state.syncing = true;
+        const targets = [$("syncButton"), $("mobileSyncButton"), button].filter(Boolean);
+        for (const target of targets) { target.disabled = true; target.dataset.previousHtml = target.innerHTML; target.innerHTML = `<span class="spinner"></span>Sync…`; }
+        try {
+          const result = await api("/api/sync", { method: "POST", body: JSON.stringify({}) });
+          await loadAccounts();
+          await loadInbox();
+          toast(`Sinkronisasi selesai: ${Number(result.new_messages || 0)} email baru dari ${Array.isArray(result.synced_accounts) ? result.synced_accounts.length : 0} akun.`);
+        } catch (error) { toast(error.message, "error"); }
+        finally { state.syncing = false; for (const target of targets) { target.disabled = false; target.innerHTML = target.dataset.previousHtml || "Sync Sekarang"; } }
+      }
+
+      function openAddDialog() {
+        $("addAccountForm").reset();
+        $("newCategory").value = "General";
+        $("addAccountDialog").showModal();
+        window.setTimeout(() => $("newAlias").focus(), 50);
+      }
+
+      function openEditDialog(accountId) {
+        const account = state.accounts.find((item) => String(item.id) === String(accountId));
+        if (!account) return;
+        state.editingAccount = account;
+        $("editAccountId").value = String(account.id);
+        $("editAccountEmail").textContent = account.email;
+        $("editAlias").value = account.alias || "";
+        $("editCategory").value = account.category || "General";
+        $("editAccountDialog").showModal();
+      }
+
+      async function saveAccount(event) {
+        event.preventDefault();
+        const id = Number($("editAccountId").value);
+        const alias = $("editAlias").value.trim();
+        const category = $("editCategory").value.trim();
+        if (!alias || !category) { toast("Alias dan kategori wajib diisi.", "error"); return; }
+        const button = $("editAccountForm").querySelector('button[type="submit"]');
+        button.disabled = true;
+        try {
+          await api(`/api/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ alias, category }) });
+          $("editAccountDialog").close();
+          await loadAccounts();
+          await loadInbox();
+          toast("Alias dan kategori akun berhasil diperbarui.");
+        } catch (error) { toast(error.message, "error"); }
+        finally { button.disabled = false; }
+      }
+
+      async function deleteAccount() {
+        const account = state.editingAccount;
+        if (!account) return;
+        const confirmed = window.confirm(`Hapus akun ${account.email} dari Unified Gmail Hub? Seluruh metadata email yang tersimpan untuk akun ini juga akan dihapus.`);
+        if (!confirmed) return;
+        const button = $("deleteAccountButton");
+        button.disabled = true;
+        try {
+          await api(`/api/accounts/${Number(account.id)}`, { method: "DELETE" });
+          if (String(state.accountId) === String(account.id)) { state.accountId = ""; state.selectedMessageId = null; state.selectedMessage = null; document.body.classList.remove("message-open"); }
+          $("editAccountDialog").close();
+          await loadAccounts();
+          await loadInbox();
+          toast("Akun dan cache metadata email berhasil dihapus.");
+        } catch (error) { toast(error.message, "error"); }
+        finally { button.disabled = false; }
+      }
+
+      function applyCategory(category) {
+        state.category = category;
+        state.accountId = "";
+        state.selectedMessageId = null;
+        state.selectedMessage = null;
+        document.body.classList.remove("message-open");
+        setActiveNav();
+        void loadInbox();
+      }
+
+      function applyAccount(accountId) {
+        state.accountId = String(accountId);
+        state.category = "";
+        state.selectedMessageId = null;
+        state.selectedMessage = null;
+        document.body.classList.remove("message-open");
+        renderAccounts();
+        renderCategories();
+        void loadInbox();
+      }
+
+      function debounce(callback, delay) {
+        let timer;
+        return (...args) => { window.clearTimeout(timer); timer = window.setTimeout(() => callback(...args), delay); };
+      }
+
+      function bindEvents() {
+        $("addAccountButton").addEventListener("click", openAddDialog);
+        $("mobileAddButton").addEventListener("click", openAddDialog);
+        $("addAccountForm").addEventListener("submit", (event) => {
+          event.preventDefault();
+          const alias = $("newAlias").value.trim();
+          const category = $("newCategory").value.trim() || "General";
+          if (!alias || !category) { toast("Alias dan kategori wajib diisi.", "error"); return; }
+          const target = new URL("/auth/add", window.location.origin);
+          target.searchParams.set("alias", alias);
+          target.searchParams.set("category", category);
+          window.location.assign(target.toString());
+        });
+        $("editAccountForm").addEventListener("submit", saveAccount);
+        $("deleteAccountButton").addEventListener("click", deleteAccount);
+        $("allInboxButton").addEventListener("click", () => applyCategory(""));
+        $("categoryNav").addEventListener("click", (event) => {
+          const button = event.target.closest("[data-category]");
+          if (button) applyCategory(button.dataset.category);
+        });
+        $("accountNav").addEventListener("click", (event) => {
+          const edit = event.target.closest("[data-edit-account]");
+          if (edit) { openEditDialog(edit.dataset.editAccount); return; }
+          const button = event.target.closest("[data-account]");
+          if (button) applyAccount(button.dataset.account);
+        });
+        $("messageList").addEventListener("click", (event) => {
+          const button = event.target.closest("[data-message]");
+          if (button) void openMessage(button.dataset.message);
+          if (event.target.closest("#emptyAddButton")) openAddDialog();
+          if (event.target.closest("#emptySyncButton")) void syncNow($("syncButton"));
+          if (event.target.closest("#retryInboxButton")) void loadInbox();
+        });
+        $("readerContent").addEventListener("click", (event) => {
+          if (event.target.closest("#sendReplyButton")) void sendReply();
+          if (event.target.closest("#retryMessageButton")) void openMessage(state.selectedMessageId);
+        });
+        $("syncButton").addEventListener("click", () => void syncNow($("syncButton")));
+        $("mobileSyncButton").addEventListener("click", () => void syncNow($("mobileSyncButton")));
+        $("loadMoreButton").addEventListener("click", async () => {
+          if (state.nextOffset === null || state.loadingInbox) return;
+          const next = state.nextOffset;
+          state.offset = next;
+          await loadInbox({ append: true });
+        });
+        $("searchInput").addEventListener("input", debounce((event) => {
+          state.query = event.target.value.trim();
+          $("clearSearchButton").hidden = !state.query;
+          state.selectedMessageId = null;
+          state.selectedMessage = null;
+          document.body.classList.remove("message-open");
+          void loadInbox();
+        }, 300));
+        $("clearSearchButton").addEventListener("click", () => {
+          $("searchInput").value = "";
+          state.query = "";
+          $("clearSearchButton").hidden = true;
+          void loadInbox();
+          $("searchInput").focus();
+        });
+        $("backToListButton").addEventListener("click", () => document.body.classList.remove("message-open"));
+        $("openOriginalButton").addEventListener("click", () => {
+          const message = state.selectedMessage;
+          if (!message?.id || !message?.account_email) return;
+          const url = `https://mail.google.com/mail/u/0/?authuser=${encodeURIComponent(message.account_email)}#all/${encodeURIComponent(message.id)}`;
+          window.open(url, "_blank", "noopener,noreferrer");
+        });
+        document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => $(button.dataset.close).close()));
+        document.querySelectorAll("dialog").forEach((dialog) => dialog.addEventListener("click", (event) => {
+          if (event.target === dialog) dialog.close();
+        }));
+      }
+
+      async function boot() {
+        bindEvents();
+        try {
+          await loadAccounts();
+          await loadInbox();
+          if (state.accounts.some((account) => account.sync_error)) toast("Ada akun yang memerlukan autentikasi ulang. Periksa indikator Re-auth.", "error");
+        } catch (error) {
+          setConnection(false, "Tidak dapat terhubung");
+          $("messageList").innerHTML = `<div class="empty-state"><div class="empty-icon text-red-600">!</div><h2 class="mt-4 text-sm font-bold">Aplikasi belum siap</h2><p class="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">${htmlEscape(error.message)} Pastikan Worker dan database D1 sudah dikonfigurasi.</p></div>`;
+        }
+        if ("serviceWorker" in navigator && window.isSecureContext) {
+          navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+        }
+      }
+      document.addEventListener("DOMContentLoaded", boot, { once: true });
+    })();
+  </script>
+</body>
+</html>
