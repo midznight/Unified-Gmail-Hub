@@ -9,7 +9,9 @@
     "deploy": "wrangler deploy",
     "db:apply": "wrangler d1 execute unified-gmail-hub --remote --file=./schema.sql",
     "db:local": "wrangler d1 execute unified-gmail-hub --local --file=./schema.sql",
-    "test": "node --test"
+    "test": "node --test",
+    "build:inline-assets": "node tools/build-inline-assets.mjs",
+    "check:inline-assets": "node tools/build-inline-assets.mjs --check"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
