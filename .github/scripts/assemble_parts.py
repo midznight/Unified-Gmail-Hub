@@ -13,5 +13,4 @@ def join_parts(prefix: str, destination: str) -> None:
     target.write_text(content, encoding="utf-8", newline="\n")
     print(f"Assembled {destination} from {len(chunks)} parts ({len(content)} characters)")
 
-join_parts("src_index", "src/index.js")
 join_parts("public_index", "public/index.html")
