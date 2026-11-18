@@ -7,6 +7,8 @@ import {
   parseMetadataMessage,
   MAX_EXTERNAL_REQUESTS_PER_RUN,
   MAX_METADATA_PER_ACCOUNT,
+  DISPLAY_WINDOW_DAYS,
+  getRecentWindowCutoff,
 } from "../src/index.js";
 
 test("MIME UTF-8 decoder preserves emoji and non-ASCII characters", () => {
@@ -63,4 +65,11 @@ test("metadata parser preserves account relation and unread status", () => {
 test("sync budget leaves headroom below the 30-request application ceiling", () => {
   assert.equal(MAX_EXTERNAL_REQUESTS_PER_RUN, 29);
   assert.equal(MAX_METADATA_PER_ACCOUNT, 7);
+});
+
+
+test("inbox display window uses a rolling seven-day cutoff", () => {
+  const now = 2_000_000_000;
+  assert.equal(DISPLAY_WINDOW_DAYS, 7);
+  assert.equal(getRecentWindowCutoff(now), now - (7 * 24 * 60 * 60));
 });
