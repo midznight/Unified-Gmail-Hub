@@ -1,16 +1,21 @@
 from pathlib import Path
+import base64
+import gzip
+import hashlib
 
 ROOT = Path(__file__).resolve().parents[2]
 PARTS = ROOT / "tmp" / "parts"
+chunks = sorted(PARTS.glob("public_index.*.part"))
+if not chunks:
+    raise SystemExit("No public_index parts found")
 
-def join_parts(prefix: str, destination: str) -> None:
-    chunks = sorted(PARTS.glob(f"{prefix}.*.part"))
-    if not chunks:
-        raise SystemExit(f"No parts found for {prefix}")
-    content = "".join(path.read_text(encoding="utf-8") for path in chunks)
-    target = ROOT / destination
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8", newline="\n")
-    print(f"Assembled {destination} from {len(chunks)} parts ({len(content)} characters)")
+encoded = "".join(path.read_text(encoding="ascii").strip() for path in chunks)
+html = gzip.decompress(base64.b64decode(encoded, validate=True))
+digest = hashlib.sha256(html).hexdigest()
+if not html.startswith(b"<!DOCTYPE html>") or not html.rstrip().endswith(b"</html>"):
+    raise SystemExit("Assembled HTML failed document boundary checks")
 
-join_parts("public_index", "public/index.html")
+target = ROOT / "public" / "index.html"
+target.parent.mkdir(parents=True, exist_ok=True)
+target.write_bytes(html)
+print(f"Assembled public/index.html from {len(chunks)} compressed parts ({len(html)} bytes, sha256 {digest})")
