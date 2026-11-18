@@ -1495,4 +1495,6 @@ export {
   parseMetadataMessage,
   MAX_EXTERNAL_REQUESTS_PER_RUN,
   MAX_METADATA_PER_ACCOUNT,
+  DISPLAY_WINDOW_DAYS,
+  getRecentWindowCutoff,
 };
