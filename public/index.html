@@ -418,7 +418,7 @@
       }
 
       async function loadInbox({ append = false } = {}) {
-        if (state.loadingInbox) return;
+        if (state.loadingInbox && append) return;
         state.loadingInbox = true;
         const sequence = ++state.requestSequence;
         if (!append) { state.offset = 0; state.nextOffset = null; showInboxSkeleton(); }
