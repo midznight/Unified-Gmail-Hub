@@ -26,6 +26,7 @@ import {
   acquireSyncLock,
   releaseSyncLock,
   manualSync,
+  runCron,
 } from "../src/index.js";
 
 test("MIME UTF-8 decoder preserves emoji and non-ASCII characters", () => {
@@ -456,6 +457,81 @@ test("manual sync releases its shared lease after successful completion", async 
   assert.equal(lockOwner, null);
   assert.equal(statements.filter((sql) => sql.includes("SET owner = ?, lease_until = ?")).length, 1);
   assert.equal(statements.filter((sql) => sql.includes("SET owner = NULL, lease_until = 0")).length, 1);
+});
+
+
+test("scheduled cron acquires and releases the same D1 lease used by manual sync", async () => {
+  let lockOwner = null;
+  const batched = [];
+  const env = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...values) {
+            return {
+              async run() {
+                if (sql.includes("SET owner = ?, lease_until = ?")) {
+                  if (lockOwner !== null) return { meta: { changes: 0 } };
+                  lockOwner = values[0];
+                  return { meta: { changes: 1 } };
+                }
+                if (sql.includes("SET owner = NULL, lease_until = 0")) {
+                  if (lockOwner === values[0]) lockOwner = null;
+                  return { meta: { changes: 1 } };
+                }
+                throw new Error("Unexpected run SQL: " + sql);
+              },
+              async all() {
+                assert.match(sql, /SELECT \* FROM accounts/);
+                return { results: [] };
+              },
+            };
+          },
+        };
+      },
+      async batch(statements) {
+        batched.push(statements);
+      },
+    },
+  };
+
+  await runCron(env);
+  assert.equal(lockOwner, null);
+  assert.equal(batched.length, 1);
+  assert.equal(batched[0].length, 3, "cron retention and nonce/pending cleanup must execute");
+});
+
+test("manual sync releases the lease when validation fails after acquisition", async () => {
+  let lockOwner = null;
+  const env = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...values) {
+            return {
+              async run() {
+                if (sql.includes("SET owner = ?, lease_until = ?")) {
+                  lockOwner = values[0];
+                  return { meta: { changes: 1 } };
+                }
+                if (sql.includes("SET owner = NULL, lease_until = 0")) {
+                  if (lockOwner === values[0]) lockOwner = null;
+                  return { meta: { changes: 1 } };
+                }
+                throw new Error("Unexpected run SQL: " + sql);
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+
+  await assert.rejects(
+    manualSync(new URL("https://hub.example.test/api/sync?account_id=invalid"), env),
+    (error) => error.status === 400 && error.code === "invalid_account_id",
+  );
+  assert.equal(lockOwner, null);
 });
 
 test("backfill does not swallow a failed atomic queue/checkpoint batch", async () => {
