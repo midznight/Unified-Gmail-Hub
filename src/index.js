@@ -195,14 +195,51 @@ function setOAuthCookie(response, nonce, url, clear = false) {
   });
 }
 
+function createLogRecord(level, event, fields = {}, timestamp = new Date()) {
+  return {
+    timestamp: timestamp.toISOString(),
+    level,
+    service: "unified-gmail-hub",
+    event,
+    ...fields,
+  };
+}
+
+// Use a generic Error object for Workers Issues without sending mailbox data or
+// raw provider errors to telemetry.
+function logEvent(level, event, fields = {}) {
+  const serialized = JSON.stringify(createLogRecord(level, event, fields));
+  if (level === "error") {
+    console.error(new Error(event), serialized);
+  } else if (level === "warn") {
+    console.warn(serialized);
+  } else {
+    console.log(serialized);
+  }
+}
+
+function summarizeSyncFailures(results = []) {
+  const failedAccounts = results.filter((result) => result?.ok !== true).length;
+  return {
+    processed_accounts: results.length,
+    failed_accounts: failedAccounts,
+    successful_accounts: results.length - failedAccounts,
+  };
+}
+
 function errorResponse(error) {
   if (error instanceof HttpError) {
+    if (error.status >= 500) {
+      logEvent("error", "http.request.failed", { status: error.status, error_code: error.code });
+    }
     return jsonResponse({ error: error.message, code: error.code }, error.status);
   }
   if (error instanceof GoogleApiError && error.status === 401) {
     return jsonResponse({ error: "Token Google tidak dapat digunakan. Hubungkan ulang akun.", code: "google_unauthorized" }, 401);
   }
-  console.error("Request gagal:", safeErrorMessage(error));
+  logEvent("error", "http.request.failed", {
+    error_type: error?.constructor?.name || "UnknownError",
+  });
   return jsonResponse({ error: "Terjadi kesalahan internal. Periksa log Worker.", code: "internal_error" }, 500);
 }
 
@@ -809,7 +846,7 @@ async function syncOneAccount(account, env, budget, semaphore) {
           await env.DB.prepare(
             "UPDATE accounts SET history_page_token = NULL, history_scan_complete = 0 WHERE id = ?",
           ).bind(account.id).run();
-          console.warn("Gmail historical page token reset for account", account.id);
+          logEvent("warn", "sync.history_page_token_reset", { account_id: Number(account.id) });
         } else {
           throw error;
         }
@@ -924,6 +961,10 @@ async function syncOneAccount(account, env, budget, semaphore) {
     if (retryableFailures > 0) {
       syncError = `${retryableFailures} metadata email gagal dimuat; sinkronisasi berikutnya akan mencoba ulang.`;
       accountResult.sync_error = syncError;
+      logEvent("error", "sync.account.metadata_failed", {
+        account_id: Number(account.id),
+        failed_messages: retryableFailures,
+      });
     }
     accountResult.ok = retryableFailures === 0;
     return accountResult;
@@ -936,6 +977,13 @@ async function syncOneAccount(account, env, budget, semaphore) {
       syncError = `Sync gagal: ${safeErrorMessage(error)}`;
     }
     accountResult.sync_error = syncError;
+    const failureType = error instanceof GoogleApiError
+      ? (error.googleCode === "invalid_grant" ? "reauth_required" : error.status === 401 ? "google_unauthorized" : "google_api_error")
+      : "internal_error";
+    logEvent("error", "sync.account.failed", {
+      account_id: Number(account.id),
+      failure_type: failureType,
+    });
     return accountResult;
   } finally {
     // Updating last_synced_at even on invalid_grant prevents one broken account
@@ -944,8 +992,8 @@ async function syncOneAccount(account, env, budget, semaphore) {
       await env.DB.prepare(
         "UPDATE accounts SET last_synced_at = ?, sync_error = ? WHERE id = ?",
       ).bind(syncedAt, syncError, account.id).run();
-    } catch (error) {
-      console.error("Gagal menyimpan status sinkronisasi akun", account.id, safeErrorMessage(error));
+    } catch {
+      logEvent("error", "sync.account_status_persist_failed", { account_id: Number(account.id) });
     }
   }
 }
@@ -1019,10 +1067,11 @@ async function releaseSyncLock(env, owner) {
 async function runCron(env) {
   const owner = await acquireSyncLock(env);
   if (!owner) {
-    console.log("Cron dilewati karena sinkronisasi lain masih memegang lock.");
+    logEvent("info", "cron.sync.skipped_lock");
     return;
   }
 
+  const startedAt = Date.now();
   const now = Math.floor(Date.now() / 1_000);
   const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
   const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
@@ -1047,12 +1096,12 @@ async function runCron(env) {
       env.DB.prepare("DELETE FROM pending_messages WHERE queued_at < ?").bind(cutoff),
     ]);
 
-    console.log(JSON.stringify({
-      cron: "gmail-sync",
-      processed_accounts: accounts.length,
+    logEvent("info", "cron.sync.completed", {
+      ...summarizeSyncFailures(synced.results),
       new_messages: synced.newMessages,
       external_requests: budget.count,
-    }));
+      duration_ms: Date.now() - startedAt,
+    });
   } finally {
     await releaseSyncLock(env, owner);
   }
@@ -1544,6 +1593,11 @@ async function manualSync(url, env) {
     const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
     const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
     const synced = await syncAccounts(accounts, env, { budget, semaphore });
+    logEvent("info", "manual.sync.completed", {
+      ...summarizeSyncFailures(synced.results),
+      new_messages: synced.newMessages,
+      external_requests: budget.count,
+    });
     return jsonResponse({
       synced_accounts: synced.results,
       new_messages: synced.newMessages,
@@ -1672,8 +1726,8 @@ export default {
   async scheduled(controller, env, ctx) {
     try {
       await runCron(env);
-    } catch (error) {
-      console.error("Cron Gmail Hub gagal:", safeErrorMessage(error));
+    } catch {
+      logEvent("error", "cron.execution.failed");
     }
   },
 };
@@ -1701,6 +1755,8 @@ export {
   decryptAccessToken,
   getValidAccessToken,
   getMessageDetails,
+  createLogRecord,
+  summarizeSyncFailures,
   acquireSyncLock,
   releaseSyncLock,
   manualSync,

@@ -23,11 +23,50 @@ import {
   decryptAccessToken,
   getValidAccessToken,
   getMessageDetails,
+  createLogRecord,
+  summarizeSyncFailures,
   acquireSyncLock,
   releaseSyncLock,
   manualSync,
   runCron,
 } from "../src/index.js";
+
+test("operational logs are structured and contain no mailbox fields by default", () => {
+  const record = createLogRecord(
+    "error",
+    "sync.account.failed",
+    { account_id: 17, failure_type: "reauth_required" },
+    new Date("2026-11-19T10:00:00.000Z"),
+  );
+
+  assert.deepEqual(record, {
+    timestamp: "2026-11-19T10:00:00.000Z",
+    level: "error",
+    service: "unified-gmail-hub",
+    event: "sync.account.failed",
+    account_id: 17,
+    failure_type: "reauth_required",
+  });
+  assert.equal("email" in record, false);
+  assert.equal("subject" in record, false);
+  assert.equal("body" in record, false);
+});
+
+test("sync failure summary counts outcomes without copying account or message details", () => {
+  const summary = summarizeSyncFailures([
+    { ok: true, account_id: 1, email: "private@example.test" },
+    { ok: false, account_id: 2, email: "private@example.test", sync_error: "private provider error" },
+    { ok: false, account_id: 3, email: "private@example.test" },
+  ]);
+
+  assert.deepEqual(summary, {
+    processed_accounts: 3,
+    failed_accounts: 2,
+    successful_accounts: 1,
+  });
+  assert.equal("email" in summary, false);
+  assert.equal("sync_error" in summary, false);
+});
 
 test("MIME UTF-8 decoder preserves emoji and non-ASCII characters", () => {
   const original = "Halo 😃 dunia — café";
