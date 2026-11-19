@@ -69,7 +69,7 @@ test("metadata parser preserves account relation and unread status", () => {
 
 test("sync budget leaves headroom below the 30-request application ceiling", () => {
   assert.equal(MAX_EXTERNAL_REQUESTS_PER_RUN, 29);
-  assert.equal(MAX_METADATA_PER_ACCOUNT, 7);
+  assert.equal(MAX_METADATA_PER_ACCOUNT, 6);
 });
 
 
