@@ -77,6 +77,8 @@
     .search-wrap input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px #dbeafe; }
     .search-wrap .search-icon { position: absolute; left: 13px; top: 13px; color: #94a3b8; pointer-events: none; }
     .search-wrap .clear-search { position: absolute; right: 5px; top: 3px; }
+    .range-select { width: min(100%, 220px); min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 34px 0 11px; background: #fff; color: #334155; font-size: 12px; font-weight: 650; outline: none; }
+    .range-select:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px #dbeafe; }
     .message-card { width: 100%; display: block; text-align: left; padding: 14px 15px; border-bottom: 1px solid #f1f5f9; border-left: 3px solid transparent; background: #fff; transition: background .12s ease; }
     .message-card:hover { background: #f8fafc; }
     .message-card.active { background: #eff6ff; border-left-color: var(--blue); }
@@ -205,9 +207,19 @@
         </div>
         <div class="search-wrap">
           <svg class="search-icon" width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          <input id="searchInput" type="search" autocomplete="off" placeholder="Cari pengirim, alamat, atau subjek…" aria-label="Cari email lintas akun">
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Cari pengirim, alamat, atau subjek…" aria-label="Cari email dalam rentang terpilih">
           <button class="icon-button clear-search" id="clearSearchButton" type="button" aria-label="Hapus pencarian" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
         </div>
+        <div class="mt-3 flex items-center justify-between gap-3">
+          <label for="inboxRange" class="text-[11px] font-semibold text-slate-500">Rentang email</label>
+          <select id="inboxRange" class="range-select" aria-label="Pilih rentang email" title="Semua tersimpan menampilkan data yang tersedia di cache: retensi 90 hari, maksimal 1.000 email.">
+            <option value="7d" selected>7 hari terakhir</option>
+            <option value="30d">30 hari terakhir</option>
+            <option value="90d">90 hari terakhir</option>
+            <option value="all">Semua tersimpan</option>
+          </select>
+        </div>
+        <p class="mt-1 text-[10px] leading-relaxed text-slate-400">Email lama dari Gmail akan diisi bertahap melalui sinkronisasi awal. “Semua tersimpan” dibatasi cache 90 hari dan maksimal 1.000 metadata email.</p>
         <div class="mobile-list-head items-center justify-between mt-3 gap-2">
           <span class="text-[11px] text-slate-500" id="mobileCount">Email dalam 7 hari terakhir</span>
           <button class="toolbar-button" id="mobileSyncButton" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 7v5h-5M4 17v-5h5M5.6 9a7 7 0 0 1 11.8-2L20 12M4 12l2.6 5a7 7 0 0 0 11.8-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Sync</button>
@@ -268,7 +280,7 @@
       "use strict";
       const state = {
         accounts: [], messages: [], selectedMessageId: null, selectedMessage: null,
-        category: "", accountId: "", query: "", offset: 0, nextOffset: null,
+        category: "", accountId: "", query: "", range: "7d", offset: 0, nextOffset: null,
         unreadTotal: 0, unreadByCategory: [], loadingInbox: false, loadingDetails: false,
         syncing: false, editingAccount: null, requestSequence: 0,
       };
@@ -276,6 +288,12 @@
       const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
       const initials = (value) => String(value || "?").trim().split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
       const avatarTone = (id) => ["blue", "green", "violet", "amber"][Math.abs(Number(id) || 0) % 4];
+      const rangeLabel = (range = state.range) => ({
+        "7d": "7 hari terakhir",
+        "30d": "30 hari terakhir",
+        "90d": "90 hari terakhir",
+        all: "semua email tersimpan",
+      }[range] || "7 hari terakhir");
       const dateLabel = (seconds) => {
         const date = new Date(Number(seconds || 0) * 1000);
         if (!Number.isFinite(date.getTime()) || !seconds) return "Waktu tidak tersedia";
@@ -353,10 +371,11 @@
       function updateListHeading() {
         const selectedAccount = state.accounts.find((account) => String(account.id) === String(state.accountId));
         let title = "Semua Inbox";
-        let subtitle = "Email 7 hari terakhir dari seluruh akun terhubung";
-        if (selectedAccount) { title = selectedAccount.alias || selectedAccount.email; subtitle = `Email 7 hari terakhir · ${selectedAccount.email}`; }
-        else if (state.category) { title = state.category; subtitle = `Email 7 hari terakhir · kategori ${state.category}`; }
-        if (state.query) subtitle = `Pencarian di email 7 hari terakhir: “${state.query}”`;
+        const period = rangeLabel();
+        let subtitle = `Email ${period} dari seluruh akun terhubung`;
+        if (selectedAccount) { title = selectedAccount.alias || selectedAccount.email; subtitle = `Email ${period} · ${selectedAccount.email}`; }
+        else if (state.category) { title = state.category; subtitle = `Email ${period} · kategori ${state.category}`; }
+        if (state.query) subtitle = `Pencarian dalam ${period}: “${state.query}”`;
         $("listTitle").textContent = title;
         $("listSubtitle").textContent = subtitle;
         $("listEyebrow").textContent = selectedAccount ? "AKUN GMAIL" : state.category ? "KATEGORI" : "KOTAK MASUK";
@@ -374,7 +393,8 @@
       function renderMessages(append = false) {
         const container = $("messageList");
         if (!state.messages.length) {
-          const message = state.query ? "Tidak ada email dalam 7 hari terakhir yang cocok dengan pencarian." : state.accounts.length ? "Tidak ada email masuk dalam 7 hari terakhir. Email yang lebih lama tidak dihapus dan tetap tersedia di Gmail." : "Hubungkan akun Gmail pertama untuk mulai menggunakan Unified Gmail Hub.";
+          const period = rangeLabel();
+          const message = state.query ? `Tidak ada email dalam ${period} yang cocok dengan pencarian.` : state.accounts.length ? `Belum ada email dalam ${period}. Sinkronisasi awal akan mengisi riwayat secara bertahap; email tetap aman di Gmail asli.` : "Hubungkan akun Gmail pertama untuk mulai menggunakan Unified Gmail Hub.";
           container.innerHTML = `<div class="empty-state"><div class="empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v14H4z" stroke="currentColor" stroke-width="1.6"/><path d="m4 7 8 6 8-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2 class="mt-4 text-sm font-bold">${state.query ? "Email tidak ditemukan" : state.accounts.length ? "Belum ada email terbaru" : "Mulai dengan akun Gmail"}</h2><p class="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">${htmlEscape(message)}</p>${!state.accounts.length ? `<button type="button" class="toolbar-button primary mt-4" id="emptyAddButton">Tambah Akun Gmail</button>` : !state.query ? `<button type="button" class="toolbar-button primary mt-4" id="emptySyncButton">Sync Sekarang</button>` : ""}</div>`;
           $("loadMoreButton").hidden = true;
           return;
@@ -382,7 +402,7 @@
         const html = state.messages.map(renderMessageCard).join("");
         if (append) container.insertAdjacentHTML("beforeend", html); else container.innerHTML = html;
         $("loadMoreButton").hidden = state.nextOffset === null;
-        $("mobileCount").textContent = `${state.messages.length} email dalam 7 hari terakhir`;
+        $("mobileCount").textContent = `${state.messages.length} email · ${rangeLabel()}`;
       }
 
       function showInboxSkeleton() {
@@ -390,14 +410,15 @@
       }
 
       async function loadAccounts() {
-        const data = await api("/api/accounts");
+        const params = new URLSearchParams({ range: state.range });
+        const data = await api(`/api/accounts?${params.toString()}`);
         state.accounts = Array.isArray(data.accounts) ? data.accounts : [];
         renderAccounts();
         return state.accounts;
       }
 
       async function loadInbox({ append = false } = {}) {
-        if (state.loadingInbox) return;
+        if (state.loadingInbox && append) return;
         state.loadingInbox = true;
         const sequence = ++state.requestSequence;
         if (!append) { state.offset = 0; state.nextOffset = null; showInboxSkeleton(); }
@@ -405,6 +426,7 @@
         if (state.category) params.set("category", state.category);
         if (state.accountId) params.set("account_id", state.accountId);
         if (state.query) params.set("q", state.query);
+        params.set("range", state.range);
         params.set("offset", String(append ? state.offset : 0));
         updateListHeading();
         try {
@@ -419,7 +441,7 @@
           renderMessages(append);
           renderCategories();
           $("allUnreadCount").textContent = String(state.unreadTotal);
-          $("listFooter").textContent = `${state.messages.length} email ditampilkan · 7 hari terakhir · cache D1`;
+          $("listFooter").textContent = `${state.messages.length} email ditampilkan · ${rangeLabel()} · cache D1 (90 hari)`;
           setConnection(true, "Terhubung ke cache D1");
         } catch (error) {
           if (sequence === state.requestSequence) {
@@ -489,7 +511,8 @@
         $("openOriginalButton").disabled = true;
         $("readerContent").innerHTML = `<div class="max-w-3xl mx-auto p-5 space-y-5"><div class="skeleton h-7 w-2/3"></div><div class="skeleton h-3 w-1/3"></div><div class="skeleton h-3 w-1/2"></div><div class="mt-8 space-y-3"><div class="skeleton h-3 w-full"></div><div class="skeleton h-3 w-11/12"></div><div class="skeleton h-3 w-4/5"></div><div class="skeleton h-40 w-full mt-6"></div></div></div>`;
         try {
-          const message = await api(`/api/messages/${encodeURIComponent(messageId)}`);
+          const detailParams = new URLSearchParams({ range: state.range });
+          const message = await api(`/api/messages/${encodeURIComponent(messageId)}?${detailParams.toString()}`);
           if (String(state.selectedMessageId) !== String(messageId)) return;
           state.selectedMessage = message;
           updateSelectedMessageInList();
@@ -509,7 +532,8 @@
         button.disabled = true;
         button.innerHTML = `<span class="spinner"></span>Mengirim…`;
         try {
-          await api(`/api/messages/${encodeURIComponent(state.selectedMessageId)}/reply`, { method: "POST", body: JSON.stringify({ body }) });
+          const replyParams = new URLSearchParams({ range: state.range });
+          await api(`/api/messages/${encodeURIComponent(state.selectedMessageId)}/reply?${replyParams.toString()}`, { method: "POST", body: JSON.stringify({ body }) });
           $("replyBody").value = "";
           toast("Balasan berhasil dikirim melalui akun yang menerima email asli.");
         } catch (error) { toast(error.message, "error"); }
@@ -586,6 +610,21 @@
         finally { button.disabled = false; }
       }
 
+      async function applyRange(range) {
+        if (!["7d", "30d", "90d", "all"].includes(range) || range === state.range) return;
+        state.range = range;
+        $("inboxRange").value = range;
+        state.selectedMessageId = null;
+        state.selectedMessage = null;
+        document.body.classList.remove("message-open");
+        try {
+          await loadAccounts();
+          await loadInbox();
+        } catch (error) {
+          toast(error.message, "error");
+        }
+      }
+
       function applyCategory(category) {
         state.category = category;
         state.accountId = "";
@@ -628,6 +667,7 @@
         $("editAccountForm").addEventListener("submit", saveAccount);
         $("deleteAccountButton").addEventListener("click", deleteAccount);
         $("allInboxButton").addEventListener("click", () => applyCategory(""));
+        $("inboxRange").addEventListener("change", (event) => void applyRange(event.target.value));
         $("categoryNav").addEventListener("click", (event) => {
           const button = event.target.closest("[data-category]");
           if (button) applyCategory(button.dataset.category);

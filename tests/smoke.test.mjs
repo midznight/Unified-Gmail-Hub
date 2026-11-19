@@ -8,7 +8,12 @@ import {
   MAX_EXTERNAL_REQUESTS_PER_RUN,
   MAX_METADATA_PER_ACCOUNT,
   DISPLAY_WINDOW_DAYS,
+  DISPLAY_WINDOWS,
+  DEFAULT_DISPLAY_RANGE,
+  normalizeDisplayRange,
   getRecentWindowCutoff,
+  MESSAGE_RETENTION_SECONDS,
+  MAX_CACHED_MESSAGES,
 } from "../src/index.js";
 
 test("MIME UTF-8 decoder preserves emoji and non-ASCII characters", () => {
@@ -64,12 +69,24 @@ test("metadata parser preserves account relation and unread status", () => {
 
 test("sync budget leaves headroom below the 30-request application ceiling", () => {
   assert.equal(MAX_EXTERNAL_REQUESTS_PER_RUN, 29);
-  assert.equal(MAX_METADATA_PER_ACCOUNT, 7);
+  assert.equal(MAX_METADATA_PER_ACCOUNT, 6);
 });
 
 
-test("inbox display window uses a rolling seven-day cutoff", () => {
+test("display ranges use rolling 7, 30, and 90 day cutoffs", () => {
   const now = 2_000_000_000;
+  assert.equal(DEFAULT_DISPLAY_RANGE, "7d");
   assert.equal(DISPLAY_WINDOW_DAYS, 7);
-  assert.equal(getRecentWindowCutoff(now), now - (7 * 24 * 60 * 60));
+  assert.deepEqual(DISPLAY_WINDOWS, { "7d": 7, "30d": 30, "90d": 90, all: null });
+  assert.equal(getRecentWindowCutoff("7d", now), now - (7 * 24 * 60 * 60));
+  assert.equal(getRecentWindowCutoff("30d", now), now - (30 * 24 * 60 * 60));
+  assert.equal(getRecentWindowCutoff("90d", now), now - (90 * 24 * 60 * 60));
+  assert.equal(getRecentWindowCutoff("all", now), null);
+  assert.equal(normalizeDisplayRange("all"), "all");
+  assert.throws(() => normalizeDisplayRange("14d"), /Rentang email tidak valid/);
+});
+
+test("cache retention preserves at most 90 days and 1000 messages", () => {
+  assert.equal(MESSAGE_RETENTION_SECONDS, 90 * 24 * 60 * 60);
+  assert.equal(MAX_CACHED_MESSAGES, 1_000);
 });

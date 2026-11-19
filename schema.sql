@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   token_expires_at INTEGER DEFAULT 0,
   last_synced_at INTEGER DEFAULT 0,
   sync_error TEXT,
+  history_page_token TEXT,
+  history_scan_complete INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER DEFAULT (unixepoch())
 );
 
