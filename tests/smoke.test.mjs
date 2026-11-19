@@ -16,6 +16,9 @@ import {
   MAX_CACHED_MESSAGES,
   GOOGLE_OAUTH_PROMPT,
   ACCOUNT_UPSERT_SQL,
+  escapeLike,
+  INBOX_SEARCH_CONDITION,
+  persistDiscoveredMessageIds,
 } from "../src/index.js";
 
 test("MIME UTF-8 decoder preserves emoji and non-ASCII characters", () => {
@@ -107,4 +110,107 @@ test("re-authorizing an existing Gmail address preserves account identity and ma
   assert.equal(ACCOUNT_UPSERT_SQL.includes("last_synced_at = excluded.last_synced_at"), false);
   assert.equal(ACCOUNT_UPSERT_SQL.includes("history_page_token = excluded.history_page_token"), false);
   assert.equal(ACCOUNT_UPSERT_SQL.includes("history_scan_complete = excluded.history_scan_complete"), false);
+});
+
+
+test("Inbox search uses a one-character LIKE escape and treats user wildcards literally", () => {
+  const escapeTokens = [...INBOX_SEARCH_CONDITION.matchAll(/ESCAPE '([^']+)'/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(escapeTokens, ["!", "!", "!"]);
+  assert.equal(escapeLike("100%_done!\\folder"), "100!%!_done!!\\folder");
+});
+
+test("backfill queues unseen IDs and advances the page checkpoint in one D1 batch", async () => {
+  const batches = [];
+  const env = {
+    DB: {
+      prepare(sql) {
+        return {
+          sql,
+          bind(...values) {
+            return { sql, values };
+          },
+        };
+      },
+      async batch(statements) {
+        batches.push(statements);
+        return [];
+      },
+    },
+  };
+
+  await persistDiscoveredMessageIds(
+    env,
+    42,
+    ["new-1", "already-cached", "new-2"],
+    new Set(["already-cached"]),
+    1_800_000_000,
+    { pageToken: "next-page-token", scanComplete: 0 },
+  );
+
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].length, 3);
+  assert.match(batches[0][0].sql, /INSERT OR IGNORE INTO pending_messages/);
+  assert.deepEqual(batches[0][0].values, ["new-1", 42, 1_800_000_000]);
+  assert.deepEqual(batches[0][1].values, ["new-2", 42, 1_800_000_000]);
+  assert.match(batches[0][2].sql, /UPDATE accounts SET history_page_token/);
+  assert.deepEqual(batches[0][2].values, ["next-page-token", 0, 42]);
+});
+
+test("backfill can commit an exhausted-page checkpoint even when no IDs are new", async () => {
+  const batches = [];
+  const env = {
+    DB: {
+      prepare(sql) {
+        return { sql, bind: (...values) => ({ sql, values }) };
+      },
+      async batch(statements) {
+        batches.push(statements);
+      },
+    },
+  };
+
+  await persistDiscoveredMessageIds(
+    env,
+    42,
+    [],
+    new Set(),
+    1_800_000_000,
+    { pageToken: null, scanComplete: 1 },
+  );
+
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].length, 1);
+  assert.match(batches[0][0].sql, /UPDATE accounts SET history_page_token/);
+  assert.deepEqual(batches[0][0].values, [null, 1, 42]);
+});
+
+test("backfill does not swallow a failed atomic queue/checkpoint batch", async () => {
+  const failure = new Error("simulated D1 batch failure");
+  let attemptedBatch = false;
+  const env = {
+    DB: {
+      prepare(sql) {
+        return { sql, bind: (...values) => ({ sql, values }) };
+      },
+      async batch(statements) {
+        attemptedBatch = true;
+        assert.equal(statements.length, 2);
+        throw failure;
+      },
+    },
+  };
+
+  await assert.rejects(
+    persistDiscoveredMessageIds(
+      env,
+      42,
+      ["not-yet-cached"],
+      new Set(),
+      1_800_000_000,
+      { pageToken: "next-page-token", scanComplete: 0 },
+    ),
+    failure,
+  );
+  assert.equal(attemptedBatch, true);
 });
