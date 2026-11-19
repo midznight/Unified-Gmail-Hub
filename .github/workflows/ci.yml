@@ -39,13 +39,13 @@ jobs:
           const projectText = readFileSync(`${projectSkill}/SKILL.md`, "utf8");
           const agentsText = readFileSync("AGENTS.md", "utf8");
           const upstreamText = readFileSync(`${googleSkill}/UPSTREAM.md`, "utf8");
-          const googleFrontMatter = googleText.match(/^---\\n([\\s\\S]*?)\\n---/);
-          const projectFrontMatter = projectText.match(/^---\\n([\\s\\S]*?)\\n---/);
+          const googleFrontMatterEnd = googleText.indexOf("---", 3);
+          const projectFrontMatterEnd = projectText.indexOf("---", 3);
 
-          assert.ok(googleFrontMatter, "Google skill must have YAML front matter");
-          assert.match(googleFrontMatter[1], /^name: retrieving-developer-knowledge$/m);
-          assert.ok(projectFrontMatter, "Project skill must have YAML front matter");
-          assert.match(projectFrontMatter[1], /^name: unified-gmail-hub-development$/m);
+          assert.ok(googleText.startsWith("---") && googleFrontMatterEnd > 3, "Google skill must have YAML front matter");
+          assert.match(googleText.slice(3, googleFrontMatterEnd), /^name: retrieving-developer-knowledge$/m);
+          assert.ok(projectText.startsWith("---") && projectFrontMatterEnd > 3, "Project skill must have YAML front matter");
+          assert.match(projectText.slice(3, projectFrontMatterEnd), /^name: unified-gmail-hub-development$/m);
           assert.ok(googleText.includes("Project adaptation notice"));
           assert.ok(googleText.includes("official Google documentation"));
           assert.ok(agentsText.includes("unified-gmail-hub-development/SKILL.md"));
