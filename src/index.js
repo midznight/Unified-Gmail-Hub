@@ -7,6 +7,20 @@ const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/gmail.send",
 ];
+const GOOGLE_OAUTH_PROMPT = "select_account consent";
+
+// Re-authorizing an already connected mailbox must never replace its user-facing
+// identity or historical sync state. Only refresh Google credentials on conflict.
+const ACCOUNT_UPSERT_SQL = `
+  INSERT INTO accounts
+    (email, alias, category, refresh_token_enc, access_token, token_expires_at, last_synced_at, sync_error)
+  VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+  ON CONFLICT(email) DO UPDATE SET
+    refresh_token_enc = excluded.refresh_token_enc,
+    access_token = excluded.access_token,
+    token_expires_at = excluded.token_expires_at,
+    sync_error = NULL
+`;
 
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const TOKEN_EARLY_REFRESH_SECONDS = 60;
@@ -1002,7 +1016,7 @@ async function startOAuth(request, env, url) {
   oauthUrl.searchParams.set("response_type", "code");
   oauthUrl.searchParams.set("scope", GOOGLE_SCOPES.join(" "));
   oauthUrl.searchParams.set("access_type", "offline");
-  oauthUrl.searchParams.set("prompt", "consent");
+  oauthUrl.searchParams.set("prompt", GOOGLE_OAUTH_PROMPT);
   oauthUrl.searchParams.set("include_granted_scopes", "true");
   oauthUrl.searchParams.set("state", state);
 
@@ -1081,18 +1095,7 @@ async function finishOAuth(request, env, url) {
 
     const now = Math.floor(Date.now() / 1_000);
     const tokenExpiresAt = now + Math.max(60, Number(tokenData.expires_in) || 3_600);
-    await env.DB.prepare(`
-      INSERT INTO accounts
-        (email, alias, category, refresh_token_enc, access_token, token_expires_at, last_synced_at, sync_error)
-      VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
-      ON CONFLICT(email) DO UPDATE SET
-        alias = excluded.alias,
-        category = excluded.category,
-        refresh_token_enc = excluded.refresh_token_enc,
-        access_token = excluded.access_token,
-        token_expires_at = excluded.token_expires_at,
-        sync_error = NULL
-    `).bind(
+    await env.DB.prepare(ACCOUNT_UPSERT_SQL).bind(
       email,
       payload.alias,
       payload.category,
@@ -1101,7 +1104,10 @@ async function finishOAuth(request, env, url) {
       tokenExpiresAt,
     ).run();
 
-    const success = htmlResponse(oauthResultPage(true, `Akun ${email} berhasil ditambahkan atau diperbarui.`));
+    const successMessage = existing
+      ? `Akun ${email} sudah terhubung. Akses Google diperbarui, tetapi alias, kategori, dan riwayat email yang tersimpan tetap dipertahankan. Untuk menambahkan akun lain, ulangi proses ini dan pilih alamat Google yang berbeda.`
+      : `Akun ${email} berhasil ditambahkan.`;
+    const success = htmlResponse(oauthResultPage(true, successMessage));
     return setOAuthCookie(success, "", url, true);
   } catch (error) {
     console.error("OAuth callback gagal:", safeErrorMessage(error));
@@ -1588,4 +1594,6 @@ export {
   getRecentWindowCutoff,
   MESSAGE_RETENTION_SECONDS,
   MAX_CACHED_MESSAGES,
+  GOOGLE_OAUTH_PROMPT,
+  ACCOUNT_UPSERT_SQL,
 };
