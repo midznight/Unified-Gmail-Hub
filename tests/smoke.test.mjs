@@ -14,6 +14,8 @@ import {
   getRecentWindowCutoff,
   MESSAGE_RETENTION_SECONDS,
   MAX_CACHED_MESSAGES,
+  GOOGLE_OAUTH_PROMPT,
+  ACCOUNT_UPSERT_SQL,
 } from "../src/index.js";
 
 test("MIME UTF-8 decoder preserves emoji and non-ASCII characters", () => {
@@ -89,4 +91,17 @@ test("display ranges use rolling 7, 30, and 90 day cutoffs", () => {
 test("cache retention preserves at most 90 days and 1000 messages", () => {
   assert.equal(MESSAGE_RETENTION_SECONDS, 90 * 24 * 60 * 60);
   assert.equal(MAX_CACHED_MESSAGES, 1_000);
+});
+
+
+test("OAuth add flow explicitly asks Google to show the account chooser", () => {
+  assert.equal(GOOGLE_OAUTH_PROMPT, "select_account consent");
+});
+
+test("re-authorizing an existing Gmail address preserves account identity and mailbox history", () => {
+  assert.match(ACCOUNT_UPSERT_SQL, /ON CONFLICT\\(email\\) DO UPDATE SET/i);
+  assert.match(ACCOUNT_UPSERT_SQL, /refresh_token_enc = excluded\\.refresh_token_enc/i);
+  assert.match(ACCOUNT_UPSERT_SQL, /access_token = excluded\\.access_token/i);
+  assert.doesNotMatch(ACCOUNT_UPSERT_SQL, /\\b(alias|category)\\s*=/i);
+  assert.doesNotMatch(ACCOUNT_UPSERT_SQL, /\\b(last_synced_at|history_page_token|history_scan_complete)\\s*=/i);
 });
