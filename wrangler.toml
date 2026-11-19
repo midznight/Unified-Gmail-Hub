@@ -18,3 +18,20 @@ crons = ["* * * * *"]
 
 [vars]
 ALERT_KEYWORDS = "invoice,pembayaran,otp,verifikasi"
+
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+redact_query_string = true
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+head_sampling_rate = 1.0
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
+
+[observability.issues]
+enabled = true
