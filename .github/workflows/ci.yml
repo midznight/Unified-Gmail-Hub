@@ -38,6 +38,9 @@ jobs:
           assert.ok(html.trimStart().startsWith("<!DOCTYPE html>"));
           assert.ok(html.trimEnd().endsWith("</html>"));
           assert.ok(html.includes("Perlu Re-auth"));
+          assert.ok(html.includes('id="inboxRange"'));
+          assert.ok(html.includes('<option value="90d">90 hari terakhir</option>'));
+          assert.ok(html.includes('<option value="all">Semua tersimpan</option>'));
           assert.ok(html.includes('sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"'));
 
           const manifest = JSON.parse(readFileSync("public/manifest.webmanifest", "utf8"));
