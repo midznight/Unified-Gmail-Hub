@@ -1023,6 +1023,7 @@ async function runCron(env) {
     return;
   }
 
+  const now = Math.floor(Date.now() / 1_000);
   const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
   const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
   try {
@@ -1703,4 +1704,5 @@ export {
   acquireSyncLock,
   releaseSyncLock,
   manualSync,
+  runCron,
 };
