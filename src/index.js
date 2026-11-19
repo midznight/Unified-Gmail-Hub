@@ -1260,7 +1260,6 @@ async function getInbox(url, env) {
     next_offset: (list.results || []).length === 40 ? offset + 40 : null,
   });
 }
-}
 
 async function getMessageDetails(messageId, requestedRange, env, budget, semaphore) {
   if (!messageId || messageId.length > 200) {
