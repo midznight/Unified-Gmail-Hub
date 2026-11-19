@@ -39,7 +39,11 @@ The Worker hostname and API must be protected by Cloudflare Zero Trust Access. K
 
 Workers Logs, sampled Traces, and Workers Issues are enabled in the production configuration. Query strings are redacted from observability data because OAuth callback parameters and user searches may be present in URLs. Application logs use structured events and intentionally omit Gmail addresses, subjects, bodies, tokens, and raw provider responses.
 
-Open **Workers & Pages → unified-gmail-hub → Observability** to review logs, traces, and detected issues. A Cloudflare email notification policy is configured for the Worker issue automation; the first detected issue triggers a notification. Cloudflare Logs and Traces have platform-defined retention and usage terms, so review Cloudflare's current Observability pricing before materially increasing traffic or sampling.\n\n## PWA asset packaging\n\nThe Worker serves `public/` through the `ASSETS` binding on normal Wrangler deployments. A bundled fallback in `src/inline-assets.js` is also included for direct Worker API deployments where the static-asset upload API is unavailable. If you change a file in `public/` and need to refresh that fallback, run `npm run build:inline-assets`; CI checks it with `npm run check:inline-assets`.
+Open **Workers & Pages → unified-gmail-hub → Observability** to review logs, traces, and detected issues. A Cloudflare email notification policy is configured for the Worker issue automation; the first detected issue triggers a notification. Cloudflare Logs and Traces have platform-defined retention and usage terms, so review Cloudflare's current Observability pricing before materially increasing traffic or sampling.
+
+## PWA asset packaging
+
+The Worker serves `public/` through the `ASSETS` binding on normal Wrangler deployments. A bundled fallback in `src/inline-assets.js` is also included for direct Worker API deployments where the static-asset upload API is unavailable. If you change a file in `public/` and need to refresh that fallback, run `npm run build:inline-assets`; CI checks it with `npm run check:inline-assets`.
 
 Do not commit .dev.vars, .env, OAuth credentials, access/refresh tokens, or the encryption key.
 
