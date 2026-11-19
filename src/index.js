@@ -37,6 +37,7 @@ const DEFAULT_DISPLAY_RANGE = "7d";
 const DISPLAY_WINDOWS = Object.freeze({ "7d": 7, "30d": 30, "90d": 90, all: null });
 const DISPLAY_WINDOW_DAYS = DISPLAY_WINDOWS[DEFAULT_DISPLAY_RANGE];
 const MAX_CACHED_MESSAGES = 1_000;
+const INBOX_SEARCH_CONDITION = "(m.sender_name LIKE ? ESCAPE '!' OR m.sender_email LIKE ? ESCAPE '!' OR m.subject LIKE ? ESCAPE '!')";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: false });
@@ -689,7 +690,25 @@ function getCacheRetentionCutoff(now = Math.floor(Date.now() / 1_000)) {
 }
 
 function escapeLike(value) {
-  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+  return value.replace(/[!%_]/g, (character) => '!' + character);
+}
+
+async function persistDiscoveredMessageIds(env, accountId, ids, existingIds, queuedAt, historyCheckpoint) {
+  const statements = ids
+    .filter((id) => !existingIds.has(id))
+    .map((id) => env.DB.prepare(`
+      INSERT OR IGNORE INTO pending_messages (id, account_id, queued_at)
+      VALUES (?, ?, ?)
+    `).bind(id, accountId, queuedAt));
+
+  // D1 batch is transactional: queued IDs and the page checkpoint commit together.
+  if (historyCheckpoint) {
+    statements.push(env.DB.prepare(
+      "UPDATE accounts SET history_page_token = ?, history_scan_complete = ? WHERE id = ?",
+    ).bind(historyCheckpoint.pageToken, historyCheckpoint.scanComplete, accountId));
+  }
+
+  if (statements.length) await env.DB.batch(statements);
 }
 
 function makeGmailMessageUrl(id, query = "") {
@@ -715,6 +734,7 @@ async function syncOneAccount(account, env, budget, semaphore) {
     listUrl.searchParams.set("maxResults", String(MAX_GMAIL_LIST_IDS));
     const listing = await fetchGoogleJson(listUrl.toString(), accessToken, { method: "GET" }, budget, semaphore);
     const listings = [listing];
+    let historyCheckpoint = null;
 
     // Backfill the last 90 days one page per account per cron cycle. The recent
     // query above remains separate so newly arrived messages keep being found
@@ -729,9 +749,10 @@ async function syncOneAccount(account, env, budget, semaphore) {
         const historyListing = await fetchGoogleJson(historyUrl.toString(), accessToken, { method: "GET" }, budget, semaphore);
         listings.push(historyListing);
         const nextPageToken = String(historyListing.nextPageToken || "");
-        await env.DB.prepare(
-          "UPDATE accounts SET history_page_token = ?, history_scan_complete = ? WHERE id = ?",
-        ).bind(nextPageToken || null, nextPageToken ? 0 : 1, account.id).run();
+        historyCheckpoint = {
+          pageToken: nextPageToken || null,
+          scanComplete: nextPageToken ? 0 : 1,
+        };
       } catch (error) {
         // Gmail can invalidate a page token when mailbox contents change. Restart
         // the backfill from its first page, but still keep the recent poll result.
@@ -750,22 +771,17 @@ async function syncOneAccount(account, env, budget, semaphore) {
       .map((message) => String(message.id || ""))
       .filter(Boolean)))];
 
-    // Persist every unseen ID before fetching metadata so the incremental
-    // backfill can safely continue beyond the current cycle's request budget.
+    // Read existing metadata, then queue unseen IDs and advance the history
+    // cursor in one D1 transaction. A failed batch leaves the old cursor intact.
+    const existingIds = new Set();
     if (ids.length) {
       const placeholders = ids.map(() => "?").join(", ");
       const existingResult = await env.DB.prepare(
         `SELECT id FROM messages WHERE account_id = ? AND id IN (${placeholders})`,
       ).bind(account.id, ...ids).all();
-      const existingIds = new Set((existingResult.results || []).map((row) => String(row.id)));
-      const pendingInserts = ids
-        .filter((id) => !existingIds.has(id))
-        .map((id) => env.DB.prepare(`
-          INSERT OR IGNORE INTO pending_messages (id, account_id, queued_at)
-          VALUES (?, ?, ?)
-        `).bind(id, account.id, syncedAt));
-      if (pendingInserts.length) await env.DB.batch(pendingInserts);
+      for (const row of existingResult.results || []) existingIds.add(String(row.id));
     }
+    await persistDiscoveredMessageIds(env, account.id, ids, existingIds, syncedAt, historyCheckpoint);
 
     const pendingResult = await env.DB.prepare(`
       SELECT p.id
@@ -1205,7 +1221,7 @@ async function getInbox(url, env) {
   }
   if (query) {
     const pattern = `%${escapeLike(query)}%`;
-    conditions.push("(m.sender_name LIKE ? ESCAPE '\\\\' OR m.sender_email LIKE ? ESCAPE '\\\\' OR m.subject LIKE ? ESCAPE '\\\\')");
+    conditions.push(INBOX_SEARCH_CONDITION);
     parameters.push(pattern, pattern, pattern);
   }
 
@@ -1596,4 +1612,7 @@ export {
   MAX_CACHED_MESSAGES,
   GOOGLE_OAUTH_PROMPT,
   ACCOUNT_UPSERT_SQL,
+  escapeLike,
+  INBOX_SEARCH_CONDITION,
+  persistDiscoveredMessageIds,
 };
