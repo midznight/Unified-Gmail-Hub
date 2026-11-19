@@ -368,6 +368,41 @@ async function decryptRefreshToken(encrypted, env) {
   return decoder.decode(plaintext);
 }
 
+// Access tokens are short-lived but still bearer credentials with Gmail scope.
+// Keep them encrypted at rest too, using purpose-specific authenticated data.
+async function encryptAccessToken(token, env) {
+  if (!token) throw new Error("Access token kosong.");
+  const key = await getAesKey(env);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const additionalData = encoder.encode("unified-gmail-hub:access-token:v1");
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData, tagLength: 128 },
+    key,
+    encoder.encode(token),
+  );
+  return `at1.${bytesToBase64Url(iv)}.${bytesToBase64Url(new Uint8Array(ciphertext))}`;
+}
+
+async function decryptAccessToken(encrypted, env) {
+  const [version, ivPart, ciphertextPart, extra] = String(encrypted || "").split(".");
+  if (version !== "at1" || !ivPart || !ciphertextPart || extra) {
+    throw new Error("Format access token terenkripsi tidak dikenal.");
+  }
+  const iv = decodeBase64UrlBytes(ivPart);
+  const ciphertext = decodeBase64UrlBytes(ciphertextPart);
+  if (iv.length !== 12 || ciphertext.length < 16) {
+    throw new Error("Data access token terenkripsi tidak valid.");
+  }
+  const key = await getAesKey(env);
+  const additionalData = encoder.encode("unified-gmail-hub:access-token:v1");
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv, additionalData, tagLength: 128 },
+    key,
+    ciphertext,
+  );
+  return decoder.decode(plaintext);
+}
+
 async function getHmacKey(env) {
   requireEnvironment(env, ["ENCRYPTION_KEY"]);
   const domainSeparated = await crypto.subtle.digest(
@@ -512,16 +547,30 @@ async function refreshAccessToken(account, env, budget, semaphore) {
 
   const now = Math.floor(Date.now() / 1_000);
   const expiresAt = now + Math.max(60, Number(payload.expires_in) || 3_600);
+  const encryptedAccessToken = await encryptAccessToken(payload.access_token, env);
   await env.DB.prepare(
     "UPDATE accounts SET access_token = ?, token_expires_at = ? WHERE id = ?",
-  ).bind(payload.access_token, expiresAt, account.id).run();
+  ).bind(encryptedAccessToken, expiresAt, account.id).run();
   return payload.access_token;
 }
 
 async function getValidAccessToken(account, env, budget, semaphore) {
   const now = Math.floor(Date.now() / 1_000);
   if (account.access_token && Number(account.token_expires_at || 0) > now + TOKEN_EARLY_REFRESH_SECONDS) {
-    return account.access_token;
+    requireEnvironment(env, ["ENCRYPTION_KEY"]);
+    const storedAccessToken = String(account.access_token);
+    if (storedAccessToken.startsWith("at1.")) {
+      return decryptAccessToken(storedAccessToken, env);
+    }
+
+    // Backward-compatible lazy migration for access tokens saved before this
+    // release. The conditional update avoids replacing a token refreshed by a
+    // concurrent request after this account row was read.
+    const encryptedAccessToken = await encryptAccessToken(storedAccessToken, env);
+    await env.DB.prepare(
+      "UPDATE accounts SET access_token = ? WHERE id = ? AND access_token = ?",
+    ).bind(encryptedAccessToken, account.id, storedAccessToken).run();
+    return storedAccessToken;
   }
   requireEnvironment(env, ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "ENCRYPTION_KEY"]);
   return refreshAccessToken(account, env, budget, semaphore);
@@ -1111,12 +1160,13 @@ async function finishOAuth(request, env, url) {
 
     const now = Math.floor(Date.now() / 1_000);
     const tokenExpiresAt = now + Math.max(60, Number(tokenData.expires_in) || 3_600);
+    const encryptedAccessToken = await encryptAccessToken(tokenData.access_token, env);
     await env.DB.prepare(ACCOUNT_UPSERT_SQL).bind(
       email,
       payload.alias,
       payload.category,
       encryptedRefreshToken,
-      tokenData.access_token,
+      encryptedAccessToken,
       tokenExpiresAt,
     ).run();
 
@@ -1283,7 +1333,7 @@ async function getInbox(url, env) {
   });
 }
 
-async function getMessageDetails(messageId, requestedRange, env, budget, semaphore) {
+async function getMessageDetails(messageId, requestedRange, env, budget, semaphore, { markAsRead = false } = {}) {
   if (!messageId || messageId.length > 200) {
     throw new HttpError(400, "ID pesan tidak valid.", "invalid_message_id");
   }
@@ -1312,20 +1362,22 @@ async function getMessageDetails(messageId, requestedRange, env, budget, semapho
   const to = getHeader(headers, "To");
   const replyTo = getHeader(headers, "Reply-To") || stored.reply_to || "";
 
-  if ((message.labelIds || []).includes("UNREAD")) {
-    await fetchGoogleJson(
-      `${GOOGLE_API}/users/me/messages/${encodeURIComponent(messageId)}/modify`,
-      accessToken,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
-      },
-      budget,
-      semaphore,
-    );
+  if (markAsRead) {
+    if ((message.labelIds || []).includes("UNREAD")) {
+      await fetchGoogleJson(
+        `${GOOGLE_API}/users/me/messages/${encodeURIComponent(messageId)}/modify`,
+        accessToken,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+        },
+        budget,
+        semaphore,
+      );
+    }
+    await env.DB.prepare("UPDATE messages SET is_unread = 0 WHERE id = ?").bind(messageId).run();
   }
-  await env.DB.prepare("UPDATE messages SET is_unread = 0 WHERE id = ?").bind(messageId).run();
 
   return jsonResponse({
     id: messageId,
@@ -1509,6 +1561,17 @@ async function routeApi(request, env, url) {
     throw new HttpError(405, "Method tidak diizinkan.", "method_not_allowed");
   }
 
+  const openMatch = pathname.match(/^\/api\/messages\/([^/]+)\/open$/);
+  if (openMatch) {
+    if (method !== "POST") {
+      throw new HttpError(405, "Method tidak diizinkan.", "method_not_allowed");
+    }
+    const messageId = decodePathSegment(openMatch[1]);
+    const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
+    const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
+    return getMessageDetails(messageId, url.searchParams.get("range"), env, budget, semaphore, { markAsRead: true });
+  }
+
   const replyMatch = pathname.match(/^\/api\/messages\/([^/]+)\/reply$/);
   if (replyMatch && method === "POST") {
     const messageId = decodePathSegment(replyMatch[1]);
@@ -1615,4 +1678,8 @@ export {
   escapeLike,
   INBOX_SEARCH_CONDITION,
   persistDiscoveredMessageIds,
+  encryptAccessToken,
+  decryptAccessToken,
+  getValidAccessToken,
+  getMessageDetails,
 };
