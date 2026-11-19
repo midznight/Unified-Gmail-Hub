@@ -99,9 +99,12 @@ test("OAuth add flow explicitly asks Google to show the account chooser", () => 
 });
 
 test("re-authorizing an existing Gmail address preserves account identity and mailbox history", () => {
-  assert.match(ACCOUNT_UPSERT_SQL, /ON CONFLICT\\(email\\) DO UPDATE SET/i);
-  assert.match(ACCOUNT_UPSERT_SQL, /refresh_token_enc = excluded\\.refresh_token_enc/i);
-  assert.match(ACCOUNT_UPSERT_SQL, /access_token = excluded\\.access_token/i);
-  assert.doesNotMatch(ACCOUNT_UPSERT_SQL, /\\b(alias|category)\\s*=/i);
-  assert.doesNotMatch(ACCOUNT_UPSERT_SQL, /\\b(last_synced_at|history_page_token|history_scan_complete)\\s*=/i);
+  assert.ok(ACCOUNT_UPSERT_SQL.includes("ON CONFLICT(email) DO UPDATE SET"));
+  assert.ok(ACCOUNT_UPSERT_SQL.includes("refresh_token_enc = excluded.refresh_token_enc"));
+  assert.ok(ACCOUNT_UPSERT_SQL.includes("access_token = excluded.access_token"));
+  assert.equal(ACCOUNT_UPSERT_SQL.includes("alias = excluded.alias"), false);
+  assert.equal(ACCOUNT_UPSERT_SQL.includes("category = excluded.category"), false);
+  assert.equal(ACCOUNT_UPSERT_SQL.includes("last_synced_at = excluded.last_synced_at"), false);
+  assert.equal(ACCOUNT_UPSERT_SQL.includes("history_page_token = excluded.history_page_token"), false);
+  assert.equal(ACCOUNT_UPSERT_SQL.includes("history_scan_complete = excluded.history_scan_complete"), false);
 });
