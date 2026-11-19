@@ -11,16 +11,17 @@ const GOOGLE_SCOPES = [
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const TOKEN_EARLY_REFRESH_SECONDS = 60;
 const MAX_CRON_ACCOUNTS = 3;
-const MAX_GMAIL_LIST_IDS = 8;
-// A run can refresh 3 tokens, list 3 mailboxes, fetch 21 metadata records,
-// and send one aggregated Telegram alert: 28 external requests at most.
-const MAX_METADATA_PER_ACCOUNT = 7;
+const MAX_GMAIL_LIST_IDS = 6;
+// A run can refresh 3 tokens, check recent + historical pages for 3 mailboxes,
+// fetch 18 metadata records, and send one aggregated Telegram alert: 28 requests.
+const MAX_METADATA_PER_ACCOUNT = 6;
 const MAX_EXTERNAL_REQUESTS_PER_RUN = 29;
 const MAX_PARALLEL_FETCHES = 6;
 const MAX_REPLY_BODY_LENGTH = 100_000;
-const MESSAGE_RETENTION_SECONDS = 30 * 24 * 60 * 60;
-const DISPLAY_WINDOW_DAYS = 7;
-const DISPLAY_WINDOW_SECONDS = DISPLAY_WINDOW_DAYS * 24 * 60 * 60;
+const MESSAGE_RETENTION_SECONDS = 90 * 24 * 60 * 60;
+const DEFAULT_DISPLAY_RANGE = "7d";
+const DISPLAY_WINDOWS = Object.freeze({ "7d": 7, "30d": 30, "90d": 90, all: null });
+const DISPLAY_WINDOW_DAYS = DISPLAY_WINDOWS[DEFAULT_DISPLAY_RANGE];
 const MAX_CACHED_MESSAGES = 1_000;
 
 const encoder = new TextEncoder();
@@ -656,8 +657,21 @@ function extractMessageBody(payload) {
   return { html: "<p>Email ini tidak memiliki isi teks yang dapat ditampilkan.</p>", text: "", format: "empty" };
 }
 
-function getRecentWindowCutoff(now = Math.floor(Date.now() / 1_000)) {
-  return now - DISPLAY_WINDOW_SECONDS;
+function normalizeDisplayRange(value) {
+  const range = String(value || DEFAULT_DISPLAY_RANGE);
+  if (!Object.hasOwn(DISPLAY_WINDOWS, range)) {
+    throw new HttpError(400, "Rentang email tidak valid.", "invalid_display_range");
+  }
+  return range;
+}
+
+function getRecentWindowCutoff(range = DEFAULT_DISPLAY_RANGE, now = Math.floor(Date.now() / 1_000)) {
+  const days = DISPLAY_WINDOWS[normalizeDisplayRange(range)];
+  return days === null ? null : now - (days * 24 * 60 * 60);
+}
+
+function getCacheRetentionCutoff(now = Math.floor(Date.now() / 1_000)) {
+  return now - MESSAGE_RETENTION_SECONDS;
 }
 
 function escapeLike(value) {
@@ -686,11 +700,44 @@ async function syncOneAccount(account, env, budget, semaphore) {
     listUrl.searchParams.set("q", "in:inbox newer_than:7d");
     listUrl.searchParams.set("maxResults", String(MAX_GMAIL_LIST_IDS));
     const listing = await fetchGoogleJson(listUrl.toString(), accessToken, { method: "GET" }, budget, semaphore);
-    const ids = [...new Set((listing.messages || []).map((message) => String(message.id || "")).filter(Boolean))];
+    const listings = [listing];
 
-    // The inbox list is only a discovery window. Persist every unseen ID before
-    // fetching metadata so IDs beyond this cycle's seven-request budget cannot
-    // fall out of Gmail's next maxResults=8 window and be lost.
+    // Backfill the last 90 days one page per account per cron cycle. The recent
+    // query above remains separate so newly arrived messages keep being found
+    // while historical pages are processed in the background.
+    if (Number(account.history_scan_complete || 0) !== 1) {
+      const historyUrl = new URL(`${GOOGLE_API}/users/me/messages`);
+      historyUrl.searchParams.set("q", "in:inbox newer_than:90d");
+      historyUrl.searchParams.set("maxResults", String(MAX_GMAIL_LIST_IDS));
+      if (account.history_page_token) historyUrl.searchParams.set("pageToken", account.history_page_token);
+
+      try {
+        const historyListing = await fetchGoogleJson(historyUrl.toString(), accessToken, { method: "GET" }, budget, semaphore);
+        listings.push(historyListing);
+        const nextPageToken = String(historyListing.nextPageToken || "");
+        await env.DB.prepare(
+          "UPDATE accounts SET history_page_token = ?, history_scan_complete = ? WHERE id = ?",
+        ).bind(nextPageToken || null, nextPageToken ? 0 : 1, account.id).run();
+      } catch (error) {
+        // Gmail can invalidate a page token when mailbox contents change. Restart
+        // the backfill from its first page, but still keep the recent poll result.
+        if (error instanceof GoogleApiError && error.status === 400 && account.history_page_token) {
+          await env.DB.prepare(
+            "UPDATE accounts SET history_page_token = NULL, history_scan_complete = 0 WHERE id = ?",
+          ).bind(account.id).run();
+          console.warn("Gmail historical page token reset for account", account.id);
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    const ids = [...new Set(listings.flatMap((page) => (page.messages || [])
+      .map((message) => String(message.id || ""))
+      .filter(Boolean)))];
+
+    // Persist every unseen ID before fetching metadata so the incremental
+    // backfill can safely continue beyond the current cycle's request budget.
     if (ids.length) {
       const placeholders = ids.map(() => "?").join(", ");
       const existingResult = await env.DB.prepare(
@@ -1074,15 +1121,25 @@ function oauthResultPage(success, message) {
   return `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${title}</title></head><body style="margin:0;background:#f8fafc;color:#0f172a;font:16px system-ui,sans-serif;display:grid;min-height:100vh;place-items:center"><main style="width:min(92vw,480px);background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:28px;box-sizing:border-box"><p style="font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${color}">${success ? "Berhasil" : "Perlu tindakan"}</p><h1 style="font-size:24px;margin:8px 0 12px">${title}</h1><p style="line-height:1.6;color:#475569">${safeMessage}</p><a href="/" style="display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;margin-top:16px;border-radius:10px;background:#2563eb;color:#fff;text-decoration:none;font-weight:700">Kembali ke Unified Gmail Hub</a></main></body></html>`;
 }
 
-async function getAccounts(env) {
-  const result = await env.DB.prepare(`
+async function getAccounts(env, requestedRange = DEFAULT_DISPLAY_RANGE) {
+  const range = normalizeDisplayRange(requestedRange);
+  const cutoff = getRecentWindowCutoff(range);
+  const unreadDateCondition = cutoff === null ? "" : " AND m.received_at >= ?";
+  const statement = env.DB.prepare(`
     SELECT a.id, a.email, a.alias, a.category, a.last_synced_at, a.sync_error,
       (SELECT COUNT(*) FROM messages m
-       WHERE m.account_id = a.id AND m.is_unread = 1 AND m.received_at >= ?) AS unread_count
+       WHERE m.account_id = a.id AND m.is_unread = 1${unreadDateCondition}) AS unread_count
     FROM accounts a
     ORDER BY a.category COLLATE NOCASE, a.alias COLLATE NOCASE, a.email COLLATE NOCASE
-  `).bind(getRecentWindowCutoff()).all();
-  return jsonResponse({ accounts: result.results || [], display_window_days: DISPLAY_WINDOW_DAYS });
+  `);
+  const result = cutoff === null ? await statement.all() : await statement.bind(cutoff).all();
+  return jsonResponse({
+    accounts: result.results || [],
+    display_range: range,
+    display_window_days: DISPLAY_WINDOWS[range],
+    cache_retention_days: 90,
+    max_cached_messages: MAX_CACHED_MESSAGES,
+  });
 }
 
 async function updateAccount(request, env, accountId) {
@@ -1113,20 +1170,25 @@ async function deleteAccount(env, accountId) {
 }
 
 async function getInbox(url, env) {
+  const range = normalizeDisplayRange(url.searchParams.get("range"));
   const category = url.searchParams.get("category") || "";
   const accountIdRaw = url.searchParams.get("account_id") || "";
   const query = (url.searchParams.get("q") || "").trim().slice(0, 120);
   const offsetRaw = Number(url.searchParams.get("offset") || 0);
   const offset = Number.isSafeInteger(offsetRaw) && offsetRaw > 0 ? Math.min(offsetRaw, 100_000) : 0;
-  const cutoff = getRecentWindowCutoff();
-  const conditions = ["m.received_at >= ?"];
-  const parameters = [cutoff];
-  let accountId = null;
+  const cutoff = getRecentWindowCutoff(range);
+  const conditions = [];
+  const parameters = [];
 
+  if (cutoff !== null) {
+    conditions.push("m.received_at >= ?");
+    parameters.push(cutoff);
+  }
   if (category && category.toLocaleLowerCase("id-ID") !== "semua") {
     conditions.push("a.category = ?");
     parameters.push(category);
   }
+  let accountId = null;
   if (accountIdRaw) {
     accountId = Number(accountIdRaw);
     if (!Number.isSafeInteger(accountId) || accountId < 1) {
@@ -1137,11 +1199,11 @@ async function getInbox(url, env) {
   }
   if (query) {
     const pattern = `%${escapeLike(query)}%`;
-    conditions.push("(m.sender_name LIKE ? ESCAPE '\\' OR m.sender_email LIKE ? ESCAPE '\\' OR m.subject LIKE ? ESCAPE '\\')");
+    conditions.push("(m.sender_name LIKE ? ESCAPE '\\\\' OR m.sender_email LIKE ? ESCAPE '\\\\' OR m.subject LIKE ? ESCAPE '\\\\')");
     parameters.push(pattern, pattern, pattern);
   }
 
-  const whereSql = `WHERE ${conditions.join(" AND ")}`;
+  const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const list = await env.DB.prepare(`
     SELECT m.id, m.thread_id, m.account_id, m.sender_name, m.sender_email, m.subject,
       m.snippet, m.is_unread, m.received_at, a.alias AS account_alias,
@@ -1153,8 +1215,12 @@ async function getInbox(url, env) {
     LIMIT 40 OFFSET ?
   `).bind(...parameters, offset).all();
 
-  const unreadConditions = ["m.is_unread = 1", "m.received_at >= ?"];
-  const unreadParameters = [cutoff];
+  const unreadConditions = ["m.is_unread = 1"];
+  const unreadParameters = [];
+  if (cutoff !== null) {
+    unreadConditions.push("m.received_at >= ?");
+    unreadParameters.push(cutoff);
+  }
   if (category && category.toLocaleLowerCase("id-ID") !== "semua") {
     unreadConditions.push("a.category = ?");
     unreadParameters.push(category);
@@ -1165,38 +1231,53 @@ async function getInbox(url, env) {
   }
   const unreadTotal = await env.DB.prepare(`
     SELECT COUNT(*) AS total
-    FROM messages m
-    INNER JOIN accounts a ON a.id = m.account_id
+    FROM messages m INNER JOIN accounts a ON a.id = m.account_id
     WHERE ${unreadConditions.join(" AND ")}
   `).bind(...unreadParameters).first();
 
+  const categoryUnreadConditions = ["m.is_unread = 1"];
+  const categoryUnreadParameters = [];
+  if (cutoff !== null) {
+    categoryUnreadConditions.push("m.received_at >= ?");
+    categoryUnreadParameters.push(cutoff);
+  }
   const unreadByCategory = await env.DB.prepare(`
     SELECT a.category, COUNT(*) AS unread_count
     FROM messages m INNER JOIN accounts a ON a.id = m.account_id
-    WHERE m.is_unread = 1 AND m.received_at >= ?
+    WHERE ${categoryUnreadConditions.join(" AND ")}
     GROUP BY a.category
     ORDER BY a.category COLLATE NOCASE
-  `).bind(cutoff).all();
+  `).bind(...categoryUnreadParameters).all();
 
   return jsonResponse({
     messages: list.results || [],
     unread_total: Number(unreadTotal?.total || 0),
     unread_by_category: unreadByCategory.results || [],
-    display_window_days: DISPLAY_WINDOW_DAYS,
+    display_range: range,
+    display_window_days: DISPLAY_WINDOWS[range],
+    cache_retention_days: 90,
+    max_cached_messages: MAX_CACHED_MESSAGES,
     next_offset: (list.results || []).length === 40 ? offset + 40 : null,
   });
 }
+}
 
-async function getMessageDetails(messageId, env, budget, semaphore) {
+async function getMessageDetails(messageId, requestedRange, env, budget, semaphore) {
   if (!messageId || messageId.length > 200) {
     throw new HttpError(400, "ID pesan tidak valid.", "invalid_message_id");
   }
-  const stored = await env.DB.prepare(`
+  const range = normalizeDisplayRange(requestedRange);
+  const cutoff = getRecentWindowCutoff(range);
+  const dateCondition = cutoff === null ? "" : " AND m.received_at >= ?";
+  const statement = env.DB.prepare(`
     SELECT m.*, a.email AS account_email, a.alias AS account_alias
     FROM messages m INNER JOIN accounts a ON a.id = m.account_id
-    WHERE m.id = ? AND m.received_at >= ?
-  `).bind(messageId, getRecentWindowCutoff()).first();
-  if (!stored) throw new HttpError(404, "Email tidak ditemukan dalam jendela tampilan 7 hari terakhir.", "message_not_found");
+    WHERE m.id = ?${dateCondition}
+  `);
+  const stored = cutoff === null
+    ? await statement.bind(messageId).first()
+    : await statement.bind(messageId, cutoff).first();
+  if (!stored) throw new HttpError(404, "Email tidak ditemukan dalam rentang tampilan yang dipilih atau sudah keluar dari cache 90 hari.", "message_not_found");
 
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(stored.account_id).first();
   if (!account) throw new HttpError(404, "Akun pemilik email tidak ditemukan.", "account_not_found");
@@ -1274,18 +1355,24 @@ function wrapBase64(value, width = 76) {
   return lines.join("\r\n");
 }
 
-async function replyToMessage(messageId, request, env, budget, semaphore) {
+async function replyToMessage(messageId, request, requestedRange, env, budget, semaphore) {
   const payload = await readJson(request, MAX_REPLY_BODY_LENGTH + 1_024);
   if (typeof payload.body !== "string" || !payload.body.trim() || payload.body.length > MAX_REPLY_BODY_LENGTH) {
     throw new HttpError(400, `Isi balasan wajib diisi dan maksimal ${MAX_REPLY_BODY_LENGTH} karakter.`, "invalid_reply_body");
   }
 
-  const stored = await env.DB.prepare(`
+  const range = normalizeDisplayRange(requestedRange);
+  const cutoff = getRecentWindowCutoff(range);
+  const dateCondition = cutoff === null ? "" : " AND m.received_at >= ?";
+  const statement = env.DB.prepare(`
     SELECT m.*, a.email AS account_email, a.alias AS account_alias
     FROM messages m INNER JOIN accounts a ON a.id = m.account_id
-    WHERE m.id = ? AND m.received_at >= ?
-  `).bind(messageId, getRecentWindowCutoff()).first();
-  if (!stored) throw new HttpError(404, "Email asal tidak ditemukan dalam jendela tampilan 7 hari terakhir.", "message_not_found");
+    WHERE m.id = ?${dateCondition}
+  `);
+  const stored = cutoff === null
+    ? await statement.bind(messageId).first()
+    : await statement.bind(messageId, cutoff).first();
+  if (!stored) throw new HttpError(404, "Email asal tidak ditemukan dalam rentang tampilan yang dipilih atau sudah keluar dari cache 90 hari.", "message_not_found");
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(stored.account_id).first();
   if (!account) throw new HttpError(404, "Akun pengirim asli tidak ditemukan.", "account_not_found");
 
@@ -1382,7 +1469,7 @@ async function routeApi(request, env, url) {
   validateSameOrigin(request, url, { mutating });
 
   if (pathname === "/api/accounts" && method === "GET") {
-    return getAccounts(env);
+    return getAccounts(env, url.searchParams.get("range"));
   }
   if (pathname === "/api/accounts" && method !== "GET") {
     throw new HttpError(405, "Method tidak diizinkan.", "method_not_allowed");
@@ -1406,7 +1493,7 @@ async function routeApi(request, env, url) {
     const messageId = decodePathSegment(replyMatch[1]);
     const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
     const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
-    return replyToMessage(messageId, request, env, budget, semaphore);
+    return replyToMessage(messageId, request, url.searchParams.get("range"), env, budget, semaphore);
   }
 
   const messageMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);
@@ -1414,7 +1501,7 @@ async function routeApi(request, env, url) {
     const messageId = decodePathSegment(messageMatch[1]);
     const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
     const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
-    return getMessageDetails(messageId, env, budget, semaphore);
+    return getMessageDetails(messageId, url.searchParams.get("range"), env, budget, semaphore);
   }
 
   if (pathname.startsWith("/api/")) {
@@ -1496,5 +1583,10 @@ export {
   MAX_EXTERNAL_REQUESTS_PER_RUN,
   MAX_METADATA_PER_ACCOUNT,
   DISPLAY_WINDOW_DAYS,
+  DISPLAY_WINDOWS,
+  DEFAULT_DISPLAY_RANGE,
+  normalizeDisplayRange,
   getRecentWindowCutoff,
+  MESSAGE_RETENTION_SECONDS,
+  MAX_CACHED_MESSAGES,
 };
