@@ -1,4 +1,5 @@
 -- D1 enforces foreign keys by default; no PRAGMA toggle is required.
+-- OAuth access and refresh tokens are encrypted with ENCRYPTION_KEY before storage.
 
 CREATE TABLE IF NOT EXISTS accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

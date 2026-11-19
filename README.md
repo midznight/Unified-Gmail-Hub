@@ -11,6 +11,7 @@ A mobile-first, single-origin Gmail hub for managing multiple authorized Gmail a
 - D1 metadata retention is 90 days, capped at the 1,000 most recent messages
 - Gmail history backfill runs incrementally while the recent inbox poll continues
 - Google Gmail API
+- OAuth access and refresh tokens encrypted at rest in D1; legacy plaintext access tokens are upgraded on use
 - Vanilla JavaScript + Tailwind CSS CDN
 - PWA manifest and offline shell
 
@@ -34,7 +35,7 @@ npm run deploy
 
 The Worker hostname and API must be protected by Cloudflare Zero Trust Access. Keep only the exact Google OAuth callback path bypassed so Google's redirect can reach the application.\n\n## PWA asset packaging\n\nThe Worker serves `public/` through the `ASSETS` binding on normal Wrangler deployments. A bundled fallback in `src/inline-assets.js` is also included for direct Worker API deployments where the static-asset upload API is unavailable. If you change a file in `public/` and need to refresh that fallback, run `npm run build:inline-assets`; CI checks it with `npm run check:inline-assets`.
 
-Do not commit .dev.vars, .env, OAuth credentials, refresh tokens, or the encryption key.
+Do not commit .dev.vars, .env, OAuth credentials, access/refresh tokens, or the encryption key.
 
 ## AI-assisted development and documentation grounding
 

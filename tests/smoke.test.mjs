@@ -19,6 +19,10 @@ import {
   escapeLike,
   INBOX_SEARCH_CONDITION,
   persistDiscoveredMessageIds,
+  encryptAccessToken,
+  decryptAccessToken,
+  getValidAccessToken,
+  getMessageDetails,
 } from "../src/index.js";
 
 test("MIME UTF-8 decoder preserves emoji and non-ASCII characters", () => {
@@ -112,6 +116,147 @@ test("re-authorizing an existing Gmail address preserves account identity and ma
   assert.equal(ACCOUNT_UPSERT_SQL.includes("history_scan_complete = excluded.history_scan_complete"), false);
 });
 
+
+
+const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64url");
+
+test("access tokens use authenticated encryption at rest", async () => {
+  const env = { ENCRYPTION_KEY: TEST_ENCRYPTION_KEY };
+  const token = "ya29.synthetic-access-token";
+  const encrypted = await encryptAccessToken(token, env);
+
+  assert.match(encrypted, /^at1\./);
+  assert.notEqual(encrypted, token);
+  assert.equal(await decryptAccessToken(encrypted, env), token);
+
+  const [version, iv, ciphertext] = encrypted.split(".");
+  const bytes = Buffer.from(ciphertext, "base64url");
+  bytes[0] ^= 1;
+  const tampered = `${version}.${iv}.${bytes.toString("base64url")}`;
+  await assert.rejects(decryptAccessToken(tampered, env));
+});
+
+test("legacy plaintext access tokens are encrypted in D1 before being used", async () => {
+  const updates = [];
+  const env = {
+    ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...values) {
+            return {
+              async run() {
+                updates.push({ sql, values });
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+  const legacyToken = "ya29.legacy-synthetic-token";
+  const account = {
+    id: 17,
+    access_token: legacyToken,
+    token_expires_at: Math.floor(Date.now() / 1_000) + 3_600,
+  };
+
+  assert.equal(await getValidAccessToken(account, env), legacyToken);
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /UPDATE accounts SET access_token = \? WHERE id = \? AND access_token = \?/);
+  assert.equal(await decryptAccessToken(updates[0].values[0], env), legacyToken);
+});
+
+test("opening an email marks it read only through the explicit action", async () => {
+  const env = { ENCRYPTION_KEY: TEST_ENCRYPTION_KEY };
+  const encryptedToken = await encryptAccessToken("ya29.synthetic-access-token", env);
+  const dbWrites = [];
+  const account = {
+    id: 5,
+    email: "owner@example.test",
+    alias: "Synthetic",
+    access_token: encryptedToken,
+    token_expires_at: Math.floor(Date.now() / 1_000) + 3_600,
+  };
+  const storedMessage = {
+    id: "message-1",
+    thread_id: "thread-1",
+    account_id: 5,
+    received_at: Math.floor(Date.now() / 1_000),
+    is_unread: 1,
+    sender_name: "Sender",
+    sender_email: "sender@example.test",
+    reply_to: "",
+    rfc_message_id: "<synthetic@example.test>",
+    subject: "Synthetic message",
+    snippet: "Preview",
+  };
+  env.DB = {
+    prepare(sql) {
+      return {
+        bind(...values) {
+          return {
+            async first() {
+              if (sql.includes("SELECT m.*")) return storedMessage;
+              if (sql.includes("SELECT * FROM accounts")) return account;
+              throw new Error("Unexpected SELECT in test: " + sql);
+            },
+            async run() {
+              dbWrites.push({ sql, values });
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+
+  async function invoke(markAsRead) {
+    const requests = [];
+    const gmailMessage = {
+      id: "message-1",
+      threadId: "thread-1",
+      labelIds: ["UNREAD"],
+      payload: {
+        mimeType: "text/plain",
+        body: { data: Buffer.from("Halo dari fixture").toString("base64url") },
+        headers: [
+          { name: "From", value: "Sender <sender@example.test>" },
+          { name: "To", value: "owner@example.test" },
+          { name: "Subject", value: "Synthetic message" },
+          { name: "Message-ID", value: "<synthetic@example.test>" },
+        ],
+      },
+    };
+    const budget = {
+      async fetch(url, init = {}) {
+        requests.push({ url: String(url), method: init.method || "GET" });
+        return new Response(JSON.stringify(gmailMessage), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    };
+    const response = await getMessageDetails(
+      "message-1",
+      "all",
+      env,
+      budget,
+      async (task) => task(),
+      { markAsRead },
+    );
+    assert.equal(response.status, 200);
+    return requests.map((request) => request.method);
+  }
+
+  const readOnlyWritesBefore = dbWrites.length;
+  assert.deepEqual(await invoke(false), ["GET"]);
+  assert.equal(dbWrites.length, readOnlyWritesBefore);
+
+  assert.deepEqual(await invoke(true), ["GET", "POST"]);
+  assert.equal(dbWrites.filter((entry) => entry.sql.includes("UPDATE messages SET is_unread = 0")).length, 1);
+});
 
 test("Inbox search uses a one-character LIKE escape and treats user wildcards literally", () => {
   const escapeTokens = [...INBOX_SEARCH_CONDITION.matchAll(/ESCAPE '([^']+)'/g)]
