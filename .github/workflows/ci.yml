@@ -27,6 +27,41 @@ jobs:
         run: npm run check:inline-assets
       - name: Run backend smoke tests
         run: npm test
+      - name: Validate agent skills and repository instructions
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { existsSync, readFileSync } from "node:fs";
+
+          const googleSkill = ".agents/skills/retrieving-developer-knowledge";
+          const projectSkill = ".agents/skills/unified-gmail-hub-development";
+          const googleText = readFileSync(`${googleSkill}/SKILL.md`, "utf8");
+          const projectText = readFileSync(`${projectSkill}/SKILL.md`, "utf8");
+          const agentsText = readFileSync("AGENTS.md", "utf8");
+          const upstreamText = readFileSync(`${googleSkill}/UPSTREAM.md`, "utf8");
+          const googleFrontMatter = googleText.match(/^---\\n([\\s\\S]*?)\\n---/);
+          const projectFrontMatter = projectText.match(/^---\\n([\\s\\S]*?)\\n---/);
+
+          assert.ok(googleFrontMatter, "Google skill must have YAML front matter");
+          assert.match(googleFrontMatter[1], /^name: retrieving-developer-knowledge$/m);
+          assert.ok(projectFrontMatter, "Project skill must have YAML front matter");
+          assert.match(projectFrontMatter[1], /^name: unified-gmail-hub-development$/m);
+          assert.ok(googleText.includes("Project adaptation notice"));
+          assert.ok(googleText.includes("official Google documentation"));
+          assert.ok(agentsText.includes("unified-gmail-hub-development/SKILL.md"));
+          assert.ok(agentsText.includes("Never invent endpoints"));
+          assert.ok(upstreamText.includes("06fff9e3edb7fc3c115a1769406047fcaf0a6289"));
+          assert.ok(readFileSync(`${googleSkill}/LICENSE`, "utf8").includes("Apache License"));
+          for (const file of [
+            "references/attribution.md",
+            "references/mcp-usage.md",
+            "references/api-fallback.md",
+            "references/supported-domains.md",
+          ]) {
+            assert.ok(existsSync(`${googleSkill}/${file}`), `Missing Google skill reference: ${file}`);
+          }
+          console.log("Validated repository instructions and both project-scoped Agent Skills.");
+          NODE
       - name: Validate frontend and manifest
         run: |
           node --input-type=module <<'NODE'
