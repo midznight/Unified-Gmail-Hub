@@ -999,19 +999,31 @@ async function sendTelegramDigest(alerts, env, budget, semaphore) {
   }
 }
 
-async function runCron(env) {
+async function acquireSyncLock(env) {
   const now = Math.floor(Date.now() / 1_000);
   const owner = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(18)));
-  // Cron invocations may run for up to 15 minutes; keep a lease beyond that
-  // ceiling so a terminated run cannot overlap its next scheduled attempt.
-  const lockResult = await env.DB.prepare(
+  // Worker invocations can run for up to 15 minutes. Keep a lease slightly
+  // longer so a terminated run cannot overlap a later cron/manual sync.
+  const result = await env.DB.prepare(
     "UPDATE cron_lock SET owner = ?, lease_until = ? WHERE id = 1 AND lease_until < ?",
   ).bind(owner, now + 960, now).run();
-  if (Number(lockResult?.meta?.changes || 0) !== 1) {
-    console.log("Cron dilewati karena siklus sebelumnya masih memegang lock.");
+  return Number(result?.meta?.changes || 0) === 1 ? owner : null;
+}
+
+async function releaseSyncLock(env, owner) {
+  await env.DB.prepare(
+    "UPDATE cron_lock SET owner = NULL, lease_until = 0 WHERE id = 1 AND owner = ?",
+  ).bind(owner).run();
+}
+
+async function runCron(env) {
+  const owner = await acquireSyncLock(env);
+  if (!owner) {
+    console.log("Cron dilewati karena sinkronisasi lain masih memegang lock.");
     return;
   }
 
+  const now = Math.floor(Date.now() / 1_000);
   const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
   const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
   try {
@@ -1042,9 +1054,7 @@ async function runCron(env) {
       external_requests: budget.count,
     }));
   } finally {
-    await env.DB.prepare(
-      "UPDATE cron_lock SET owner = NULL, lease_until = 0 WHERE id = 1 AND owner = ?",
-    ).bind(owner).run();
+    await releaseSyncLock(env, owner);
   }
 }
 
@@ -1508,31 +1518,40 @@ async function replyToMessage(messageId, request, requestedRange, env, budget, s
 }
 
 async function manualSync(url, env) {
-  const accountIdRaw = url.searchParams.get("account_id");
-  let accounts;
-  if (accountIdRaw) {
-    const accountId = Number(accountIdRaw);
-    if (!Number.isSafeInteger(accountId) || accountId < 1) {
-      throw new HttpError(400, "account_id tidak valid.", "invalid_account_id");
-    }
-    const account = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(accountId).first();
-    if (!account) throw new HttpError(404, "Akun tidak ditemukan.", "account_not_found");
-    accounts = [account];
-  } else {
-    const result = await env.DB.prepare(
-      "SELECT * FROM accounts ORDER BY last_synced_at ASC, id ASC LIMIT ?",
-    ).bind(MAX_CRON_ACCOUNTS).all();
-    accounts = result.results || [];
+  const owner = await acquireSyncLock(env);
+  if (!owner) {
+    throw new HttpError(409, "Sinkronisasi sedang berjalan. Coba lagi setelah proses sebelumnya selesai.", "sync_already_running");
   }
 
-  const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
-  const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
-  const synced = await syncAccounts(accounts, env, { budget, semaphore });
-  return jsonResponse({
-    synced_accounts: synced.results,
-    new_messages: synced.newMessages,
-    external_requests: budget.count,
-  });
+  try {
+    const accountIdRaw = url.searchParams.get("account_id");
+    let accounts;
+    if (accountIdRaw) {
+      const accountId = Number(accountIdRaw);
+      if (!Number.isSafeInteger(accountId) || accountId < 1) {
+        throw new HttpError(400, "account_id tidak valid.", "invalid_account_id");
+      }
+      const account = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(accountId).first();
+      if (!account) throw new HttpError(404, "Akun tidak ditemukan.", "account_not_found");
+      accounts = [account];
+    } else {
+      const result = await env.DB.prepare(
+        "SELECT * FROM accounts ORDER BY last_synced_at ASC, id ASC LIMIT ?",
+      ).bind(MAX_CRON_ACCOUNTS).all();
+      accounts = result.results || [];
+    }
+
+    const budget = new ExternalRequestBudget(MAX_EXTERNAL_REQUESTS_PER_RUN);
+    const semaphore = createSemaphore(MAX_PARALLEL_FETCHES);
+    const synced = await syncAccounts(accounts, env, { budget, semaphore });
+    return jsonResponse({
+      synced_accounts: synced.results,
+      new_messages: synced.newMessages,
+      external_requests: budget.count,
+    });
+  } finally {
+    await releaseSyncLock(env, owner);
+  }
 }
 
 async function routeApi(request, env, url) {
@@ -1682,4 +1701,8 @@ export {
   decryptAccessToken,
   getValidAccessToken,
   getMessageDetails,
+  acquireSyncLock,
+  releaseSyncLock,
+  manualSync,
+  runCron,
 };
